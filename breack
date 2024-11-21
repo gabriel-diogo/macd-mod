@@ -1,0 +1,35 @@
+// © Zeiierman
+
+//@version=5
+indicator("Breakout Probability (Expo)",overlay=true,max_bars_back=5000)
+
+// ~~ Tooltips {
+t1 = "The space between the levels can be adjusted with a percentage step. 1% means that each level is located 1% above/under the previous one."
+t2 = "Set the number of levels you want to display."
+t3 = "If a level got 0 % likelihood of being hit, the level is not displayed as default. Enable the option if you want to see all levels regardless of their values."
+t4 = "Enable this option if you want to display the backtest statistics for that a new high or low is made."
+string [] tbl_tips = array.from("Number of times price has reached the first highest percentage level",
+ "Number of times price failed to reach the first highest percentage level",
+ "Win/Loss ratio")
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~}
+
+// ~~ Inputs {
+perc                    = input.float(1.0,title="Percentage Step",step=.1,minval=0,group="Settings",tooltip=t1)
+nbr                     = input.int(5, title="Number of Lines",maxval=5,minval=1,group="Settings",tooltip=t2)
+upCol                   = input.color(color.new(color.green,0),title="",inline="col"),dnCol=input.color(color.new(color.red,0),title="",inline="col"),fill=input.bool(true,title="BG Color",inline="col")
+var bool [] bools       = array.from(input.bool(true,title="Disable 0.00%",group="Settings",tooltip=t3),input.bool(true, title="Show Statistic Panel",group="Settings",tooltip=t4))
+var bool [] alert_bool  = array.from(
+ input.bool(true,title="Ticker ID",group="Any alert() function call"),
+ input.bool(true,title="High/Low Price",group="Any alert() function call"),
+ input.bool(true,title="Bullish/Bearish Bias",group="Any alert() function call"),
+ input.bool(true,title="Bullish/Bearish Percentage",group="Any alert() function call"))
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~}
+
+// ~~ Variables {
+b = bar_index
+o = open
+h = high
+l = low
+c = close
+step = c*(perc/100)
+//~~~~~~~~~~~~~~~~~~
