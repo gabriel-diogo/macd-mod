@@ -1,0 +1,15 @@
+
+//@version=4
+study("Stop ATR",overlay=true)
+p=input(20,"Period")
+m=input(2,"Multiplier")
+max=close[1]+atr(p)[1]*m
+min=close[1]-atr(p)[1]*m
+stop=min
+hi=true
+hi:=hi[1]?high[1]>=stop[1]?false:true:low[1]<=stop[1]?true:false
+stop:=hi?max:min
+stop:=hi?hi[1]==false?stop:stop>stop[1]?stop[1]:stop:hi[1]?stop:stop<stop[1]?stop[1]:stop
+//plotbar(stop,stop,stop,stop,color=hi?color.red:color.green)
+plot(stop,color=hi?color.red:color.green)
+
