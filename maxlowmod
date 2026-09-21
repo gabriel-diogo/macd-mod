@@ -1,0 +1,53 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Combined from VanHe1sing & HermanBrummer scripts
+//@version=5
+indicator("HL Trend & HHLL Combined", shorttitle="HLT + HHLL", overlay=true)
+
+// --- HL TREND INPUTS ---
+int hlt_length      = input.int(23,    title="HLT Length", group="HL Trend Settings")
+int hlt_offset      = input.int(4,     title="HLT Offset", group="HL Trend Settings")
+series float hlt_src = input.source(close, title="HLT Source", group="HL Trend Settings")
+bool use_hl         = input.bool(false, title="Use High/Low for HLT", group="HL Trend Settings")
+
+// --- HHLL INPUTS ---
+int topPer          = input.int(20,    title="Top Band Lookback", group="HHLL Channel Settings")
+int botPer          = input.int(20,    title="Bot Band Lookback", group="HHLL Channel Settings")
+int maPer           = input.int(20,    title="Moving Average Period", group="HHLL Channel Settings")
+series float topSrc = input.source(high, title="Top Band Source", group="HHLL Channel Settings")
+series float botSrc = input.source(low,  title="Bot Band Source", group="HHLL Channel Settings")
+
+// --- VISUAL INPUTS ---
+bool bar_color      = input.bool(false, title="Color Bars (HLT)", group="Visuals")
+color color_up      = input.color(color.blue, title="HLT Up Color", group="Visuals")
+color color_dn      = input.color(color.red,  title="HLT Red Color", group="Visuals")
+bool show_hhll      = input.bool(true,  title="Show HHLL Channels & SMA", group="Visuals")
+
+// --- HL TREND CALCULATIONS ---
+var series float hlt = 0.0
+series float upper = ta.highest(use_hl ? high : hlt_src, hlt_length)[hlt_offset]
+series float lower = ta.lowest(use_hl ? low : hlt_src, hlt_length)[hlt_offset]
+
+hlt := hlt_src > upper ? lower : hlt_src < lower ? upper : nz(hlt)
+
+// --- HHLL CALCULATIONS ---
+float top = ta.highest(topSrc, topPer)
+float bot = ta.lowest(botSrc, botPer)
+float ma  = ta.sma(close, maPer)
+
+// --- PLOTS: HL TREND ---
+color hlt_color = hlt_src >= hlt ? color_up : color_dn
+p1 = plot(hlt, title="HL Trend Line", color=hlt_color, style=plot.style_cross)
+p2 = plot(hlt_src, title="Source Reference", display=display.none)
+fill(p1, p2, title="HLT Fill", color=color.new(hlt_color, 80))
+barcolor(bar_color ? hlt_color : na)
+
+// --- PLOTS: HHLL CHANNELS & SMA ---
+plot(show_hhll ? top : na, title="Highest Band", color=#00ff00)
+plot(show_hhll ? bot : na, title="Lowest Band", color=#ff0000)
+plot(show_hhll ? ma  : na, title="Moving Average", color=#00ffff)
+
+// --- ALERTS ---
+if close > top
+    alert("Price Crossing Highest High", alert.freq_once_per_bar)
+if close < bot
+    alert("Price Crossing Lowest Low", alert.freq_once_per_bar)
