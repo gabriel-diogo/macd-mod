@@ -1,0 +1,53 @@
+//@version=4
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//developer original: @KivancOzbilgic
+//author: @SoftKill21
+
+strategy("Profit Maximizer Strategy","PMax strat", overlay=true)
+src = input(hl2, title="Source")
+Periods = input(title="ATR Length", type=input.integer, defval=10)
+Multiplier = input(title="ATR Multiplier", type=input.float, step=0.1, defval=3.0)
+mav = input(title="Moving Average Type", defval="VAR", options=["SMA", "EMA", "WMA", "TMA", "VAR", "WWMA", "ZLEMA", "TSF"])
+length =input(12, "Moving Average Length", minval=1)
+changeATR= input(title="Change ATR Calculation Method ?", type=input.bool, defval=false)
+showsupport = input(title="Show Moving Average?", type=input.bool, defval=true)
+showsignalsk = input(title="Show Crossing Signals?", type=input.bool, defval=true)
+showsignalsc = input(title="Show Price/Pmax Crossing Signals?", type=input.bool, defval=false)
+highlighting = input(title="Highlighter On/Off ?", type=input.bool, defval=true)
+atr2 = sma(tr, Periods)
+atr= changeATR ? atr(Periods) : atr2
+valpha=2/(length+1)
+vud1=src>src[1] ? src-src[1] : 0
+vdd1=src<src[1] ? src[1]-src : 0
+vUD=sum(vud1,9)
+vDD=sum(vdd1,9)
+vCMO=nz((vUD-vDD)/(vUD+vDD))
+VAR=0.0
+VAR:=nz(valpha*abs(vCMO)*src)+(1-valpha*abs(vCMO))*nz(VAR[1])
+wwalpha = 1/ length
+WWMA = 0.0
+WWMA := wwalpha*src + (1-wwalpha)*nz(WWMA[1])
+zxLag = length/2==round(length/2) ? length/2 : (length - 1) / 2
+zxEMAData = (src + (src - src[zxLag]))
+ZLEMA = ema(zxEMAData, length)
+lrc = linreg(src, length, 0)
+lrc1 = linreg(src,length,1)
+lrs = (lrc-lrc1)
+TSF = linreg(src, length, 0)+lrs
+getMA(src, length) =>
+    ma = 0.0
+    if mav == "SMA"
+        ma := sma(src, length)
+        ma
+
+    if mav == "EMA"
+        ma := ema(src, length)
+        ma
+
+    if mav == "WMA"
+        ma := wma(src, length)
+        ma
+
+    if mav == "TMA"
+        ma := sma(sma(src, ceil(length / 2)), floor(length / 2) + 1)
+        ma
