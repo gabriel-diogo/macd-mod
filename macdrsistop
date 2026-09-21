@@ -1,0 +1,103 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=5
+strategy("PMax + MACD + RSI + MAs + Volume", shorttitle="PMax_Complete", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// --- INPUTS: PMAX & ATR ---
+int periods         = input.int(10, title="ATR Length", group="PMax Settings")
+float multiplier    = input.float(1.5, title="ATR Multiplier", step=0.1, group="PMax Settings")
+int ma_length       = input.int(12, title="Moving Average Length", minval=1, group="PMax Settings")
+bool show_pmax      = input.bool(true, title="Show PMax Line", group="PMax Settings")
+
+// --- INPUTS: MACD ---
+int fast_length     = input.int(12, title="MACD Fast Length", group="MACD Settings")
+int slow_length     = input.int(26, title="MACD Slow Length", group="MACD Settings")
+int signal_length   = input.int(9, title="MACD Signal Smoothing", group="MACD Settings")
+
+// --- INPUTS: RSI FILTER ---
+int rsi_length      = input.int(14, title="RSI Length", group="RSI Filter")
+int rsi_oversold    = input.int(40, title="RSI Min Level", group="RSI Filter")
+int rsi_overbought  = input.int(75, title="RSI Max Level", group="RSI Filter")
+
+// --- INPUTS: TREND MAs (9, 21, 50) ---
+bool use_ma_filter  = input.bool(true, title="Use MAs Filter (9, 21, 50)", group="Trend & Volume Filter")
+bool use_vol_filter = input.bool(true, title="Use Volume Filter", group="Trend & Volume Filter")
+int vol_len         = input.int(20, title="Volume SMA Length", group="Trend & Volume Filter")
+
+// --- INPUTS: RISK MANAGEMENT ---
+float tp_pct        = input.float(3.0, title="Take Profit (%)", step=0.1, group="Risk Management") / 100
+float sl_pct        = input.float(1.5, title="Stop Loss (%)", step=0.1, group="Risk Management") / 100
+
+// --- CALCULATIONS: ATR & PMAX ---
+float src           = (high + low) / 2
+float atr_val       = ta.atr(periods)
+
+float mavg          = ta.ema(src, ma_length)
+
+float long_stop     = mavg - multiplier * atr_val
+float long_stop_prev = nz(long_stop[1], long_stop)
+long_stop           := mavg > long_stop_prev ? math.max(long_stop, long_stop_prev) : long_stop
+
+float short_stop    = mavg + multiplier * atr_val
+float short_stop_prev = nz(short_stop[1], short_stop)
+short_stop          := mavg < short_stop_prev ? math.min(short_stop, short_stop_prev) : short_stop
+
+var int pmax_dir    = 1
+pmax_dir            := nz(pmax_dir[1], 1)
+pmax_dir            := pmax_dir == -1 and mavg > short_stop_prev ? 1 : pmax_dir == 1 and mavg < long_stop_prev ? -1 : pmax_dir
+float pmax          = pmax_dir == 1 ? long_stop : short_stop
+
+// --- CALCULATIONS: MACD ---
+float fast_ma       = ta.ema(close, fast_length)
+float slow_ma       = ta.ema(close, slow_length)
+float macd          = fast_ma - slow_ma
+float signal_line   = ta.sma(macd, signal_length)
+float hist          = macd - signal_line
+
+// --- CALCULATIONS: RSI ---
+float rsi_val       = ta.rsi(close, rsi_length)
+
+// --- CALCULATIONS: MAs (9, 21, 50) & VOLUME ---
+float ema9          = ta.ema(close, 9)
+float ema21         = ta.ema(close, 21)
+float ema50         = ta.ema(close, 50)
+
+float vol_sma       = ta.sma(volume, vol_len)
+bool volume_ok      = not use_vol_filter or (volume > vol_sma)
+
+// Filtro de tendência: Preço acima da 50 e as médias curtas alinhadas para cima
+bool ma_trend_ok    = not use_ma_filter or (close > ema50 and ema9 > ema21)
+
+// --- STRATEGY CONDITIONS ---
+bool macd_cond      = ta.crossover(macd, signal_line) or (hist > 0 and hist > hist[1])
+bool rsi_cond       = rsi_val > rsi_oversold and rsi_val < rsi_overbought
+
+bool buy_condition  = macd_cond and close > pmax and rsi_cond and ma_trend_ok and volume_ok
+
+// Venda / Saída por quebra do PMax ou reversão do MACD
+bool sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line)
+
+// --- EXECUTION ---
+if (buy_condition)
+    strategy.entry("Buy", strategy.long)
+
+if (sell_condition)
+    strategy.close("Buy")
+
+// Saídas por Alvo Fixo e Stop Loss
+float long_tp = strategy.position_avg_price * (1 + tp_pct)
+float long_sl = strategy.position_avg_price * (1 - sl_pct)
+
+if (strategy.position_size > 0)
+    strategy.exit("TP/SL", "Buy", limit=long_tp, stop=long_sl)
+
+// --- PLOTS ---
+plot(show_pmax ? mavg : na, color=color.new(#0585E1, 0), linewidth=2, title="Moving Avg Line")
+plot(pmax, color=pmax_dir == 1 ? color.green : color.red, linewidth=2, title="PMax Stop Line")
+
+// Plots opcionais das Médias de Tendência
+plot(ema9, color=color.yellow, title="EMA 9", linewidth=1, display=display.none)
+plot(ema21, color=color.orange, title="EMA 21", linewidth=1, display=display.none)
+plot(ema50, color=color.purple, title="EMA 50", linewidth=1, display=display.none)
+
+plotshape(buy_condition, title="Buy Signal", text="BUY", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
+plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
