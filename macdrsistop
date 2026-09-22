@@ -18,8 +18,10 @@ int rsi_length      = input.int(14, title="RSI Length", group="RSI Filter")
 int rsi_oversold    = input.int(40, title="RSI Min Level", group="RSI Filter")
 int rsi_overbought  = input.int(75, title="RSI Max Level", group="RSI Filter")
 
-// --- INPUTS: TREND MAs (9, 21, 50) ---
-bool use_ma_filter  = input.bool(true, title="Use MAs Filter (9, 21, 50)", group="Trend & Volume Filter")
+// --- INPUTS: TREND MAs & TRIGGERS ---
+bool use_ma_filter  = input.bool(true, title="Use MAs Filter (9, 21, 50, 80)", group="Trend & Volume Filter")
+bool use_ema_cross  = input.bool(true, title="Use EMA 9/21 Crossover Trigger (Buy)", group="Trend & Volume Filter")
+bool use_ema_cross_down = input.bool(true, title="Use EMA 9/21 Crossunder Trigger (Sell)", group="Trend & Volume Filter")
 bool use_vol_filter = input.bool(true, title="Use Volume Filter", group="Trend & Volume Filter")
 int vol_len         = input.int(20, title="Volume SMA Length", group="Trend & Volume Filter")
 
@@ -56,25 +58,35 @@ float hist          = macd - signal_line
 // --- CALCULATIONS: RSI ---
 float rsi_val       = ta.rsi(close, rsi_length)
 
-// --- CALCULATIONS: MAs (9, 21, 50) & VOLUME ---
+// --- CALCULATIONS: MAs (9, 21, 50, 80) & VOLUME ---
 float ema9          = ta.ema(close, 9)
 float ema21         = ta.ema(close, 21)
 float ema50         = ta.ema(close, 50)
+float ema80         = ta.ema(close, 80)
 
 float vol_sma       = ta.sma(volume, vol_len)
 bool volume_ok      = not use_vol_filter or (volume > vol_sma)
 
-// Filtro de tendência: Preço acima da 50 e as médias curtas alinhadas para cima
+// Filtro geral de tendência
 bool ma_trend_ok    = not use_ma_filter or (close > ema50 and ema9 > ema21)
 
 // --- STRATEGY CONDITIONS ---
 bool macd_cond      = ta.crossover(macd, signal_line) or (hist > 0 and hist > hist[1])
+
+// CORREÇÃO: Cruzamento de alta só ocorre se o preço estiver acima das QUATRO médias (9, 21, 50 e 80)
+bool price_above_all_mas = close > ema9 and close > ema21 and close > ema50 and close > ema80
+bool ema_cross_cond      = ta.crossover(ema9, ema21) and price_above_all_mas
+
+bool ema_cross_down_cond = ta.crossunder(ema9, ema21)
+
+// Gatilhos
+bool trigger_buy    = macd_cond or (use_ema_cross and ema_cross_cond)
 bool rsi_cond       = rsi_val > rsi_oversold and rsi_val < rsi_overbought
 
-bool buy_condition  = macd_cond and close > pmax and rsi_cond and ma_trend_ok and volume_ok
+bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok
 
-// Venda / Saída por quebra do PMax ou reversão do MACD
-bool sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line)
+// Venda / Saída
+bool sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or (use_ema_cross_down and ema_cross_down_cond)
 
 // --- EXECUTION ---
 if (buy_condition)
@@ -94,10 +106,15 @@ if (strategy.position_size > 0)
 plot(show_pmax ? mavg : na, color=color.new(#0585E1, 0), linewidth=2, title="Moving Avg Line")
 plot(pmax, color=pmax_dir == 1 ? color.green : color.red, linewidth=2, title="PMax Stop Line")
 
-// Plots opcionais das Médias de Tendência
-plot(ema9, color=color.yellow, title="EMA 9", linewidth=1, display=display.none)
-plot(ema21, color=color.orange, title="EMA 21", linewidth=1, display=display.none)
-plot(ema50, color=color.purple, title="EMA 50", linewidth=1, display=display.none)
+// Médias de Tendência visíveis no gráfico
+plot(ema9, color=color.yellow, title="EMA 9", linewidth=2)
+plot(ema21, color=color.orange, title="EMA 21", linewidth=2)
+plot(ema50, color=color.purple, title="EMA 50", linewidth=1)
+plot(ema80, color=color.teal, title="EMA 80", linewidth=2)
+
+// Marcadores visuais dos cruzamentos da EMA 9/21
+plotshape(ema_cross_cond, title="EMA 9/21 Cross Up", text="CROSS UP", location=location.belowbar, style=shape.triangleup, size=size.tiny, color=color.blue, textcolor=color.white)
+plotshape(ema_cross_down_cond, title="EMA 9/21 Cross Down", text="CROSS DOWN", location=location.abovebar, style=shape.triangledown, size=size.tiny, color=color.fuchsia, textcolor=color.white)
 
 plotshape(buy_condition, title="Buy Signal", text="BUY", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
 plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
