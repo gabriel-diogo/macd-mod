@@ -14,6 +14,7 @@ int slow_length     = input.int(26, title="MACD Slow Length", group="MACD Settin
 int signal_length   = input.int(9, title="MACD Signal Smoothing", group="MACD Settings")
 
 // --- INPUTS: RSI FILTER ---
+bool use_rsi_filter = input.bool(true, title="Usar Filtro RSI", group="RSI Filter") // <--- CORRIGIDO PARA input.bool
 int rsi_length      = input.int(14, title="RSI Length", group="RSI Filter")
 int rsi_oversold    = input.int(40, title="RSI Min Level", group="RSI Filter")
 int rsi_overbought  = input.int(75, title="RSI Max Level", group="RSI Filter")
@@ -81,7 +82,7 @@ bool ma_trend_ok    = not use_ma_filter or (close > ema50 and ema9 > ema21)
 
 // --- CALCULATIONS: SUPORTE E RESISTÊNCIA ---
 float resistance    = ta.highest(high[1], sr_len) 
-float support       = ta.lowest(low[1], sr_len)   
+float support       = ta.lowest(low[1], sr_len)    
 
 bool sr_ok          = not use_sr_filter or (close >= resistance or close > (support + (resistance - support) * 0.6))
 
@@ -99,7 +100,7 @@ bool ema_cross_down_cond = ta.crossunder(ema9, ema21)
 
 // Gatilhos de Entrada
 bool trigger_buy    = macd_cond or (use_ema_cross and ema_cross_cond)
-bool rsi_cond       = rsi_val > rsi_oversold and rsi_val < rsi_overbought
+bool rsi_cond       = not use_rsi_filter or (rsi_val > rsi_oversold and rsi_val < rsi_overbought)
 
 bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough
 
