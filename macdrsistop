@@ -140,6 +140,13 @@ if (strategy.position_size > 0)
     strategy.exit("TP2 & SL", "Buy", limit=long_tp2, stop=long_sl)
 
 
+// --- PLOTS DE GERENCIAMENTO DE RISCO (STOP LOSS VISUAL) ---
+// Mostra a linha de Stop Loss apenas quando estiver posicionado comprado
+float plot_sl_line = strategy.position_size > 0 ? long_sl : na
+plot(plot_sl_line, color=color.red, title="Stop Loss Line", style=plot.style_linebr, linewidth=2)
+plotshape(strategy.position_size > 0 and ta.crossunder(low, long_sl), title="Stop Loss Hit", text="STOP", location=location.belowbar, style=shape.flag, size=size.small, color=color.red, textcolor=color.white)
+
+
 // --- PLOTS ---
 plot(show_pmax ? mavg : na, color=color.new(#0585E1, 0), linewidth=2, title="Moving Avg Line")
 plot(pmax, color=pmax_dir == 1 ? color.green : color.red, linewidth=2, title="PMax Stop Line")
@@ -152,11 +159,11 @@ plot(ema80, color=color.teal, title="EMA 80", linewidth=2)
 plot(use_sr_filter ? resistance : na, color=color.new(color.red, 50), title="Resistência S&R", style=plot.style_linebr)
 plot(use_sr_filter ? support : na, color=color.new(color.green, 50), title="Suporte S&R", style=plot.style_linebr)
 
-plotshape(ema_cross_cond, title="EMA 9/21 Cross Up", text="CROSS UP", location=location.belowbar, style=shape.labelup , size=size.tiny, color=color.blue, textcolor=color.white)
-plotshape(ema_cross_down_cond, title="EMA 9/21 Cross Down", text="CROSS DOWN", location=location.abovebar, style=shape.labeldown , size=size.tiny, color=color.fuchsia, textcolor=color.white)
+plotshape(ema_cross_cond, title="EMA 9/21 Cross Up", text="CROSS UP", location=location.belowbar, style=shape.triangleup, size=size.tiny, color=color.blue, textcolor=color.white)
+plotshape(ema_cross_down_cond, title="EMA 9/21 Cross Down", text="CROSS DOWN", location=location.abovebar, style=shape.triangledown, size=size.tiny, color=color.fuchsia, textcolor=color.white)
 
-plotshape(buy_condition, title="Buy Signal", text="BUY", location=location.belowbar,style=shape.triangleup , size=size.small, color=color.green, textcolor=color.white)
-plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.abovebar,style=shape.triangledown , size=size.small, color=color.red, textcolor=color.white)
+plotshape(buy_condition, title="Buy Signal", text="BUY", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
+plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
 
 
 ///     USER INPUTS (HLT)     ///
@@ -169,7 +176,7 @@ bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉｎｇｓ")
 // Visual
 bool bar_color        = input(false,        group = "Ｖｉｓｕａｌ")
 color color_up        = input(color.blue, group = "Ｖｉｓｕａｌ")
-color color_dn        = input(color.red,  group = "Ｖｉｓｕａլ")
+color color_dn        = input(color.red,  group = "Ｖｉｓｕａl")
 
 
 /// INDICATOR CALCULATION ///
@@ -196,3 +203,14 @@ fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
 
 // Bar color
 barcolor(use_hlt and bar_color ? hlt_color : na)
+
+// --- CÁLCULO DE FAIXAS DE 2x ATR A PARTIR DA MÉDIA ---
+float base_ma = ta.ema(close, ma_length)
+float atr_distance = ta.atr(periods) * 2.0 // Multiplicador de 2 linhas/desvios de ATR
+
+float upper_atr_band = base_ma + atr_distance
+float lower_atr_band = base_ma - atr_distance
+
+// Condições de toque e possível reversão
+bool touch_upper_atr = high >= upper_atr_band // Preço esticado na venda (possível queda)
+bool touch_lower_atr = low <= lower_atr_band   // Preço esticado na compra (possível alta)
