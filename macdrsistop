@@ -40,6 +40,11 @@ int sr_len            = input.int(20, title="Período de S&R (Topos/Fundos Anter
 bool use_lat_filter   = input.bool(true, title="Usar Filtro de Distância (Anti-Repetição)", group="Filtro Suporte & Resistência")
 float min_distance_pct= input.float(0.6, title="Distância Mínima % do Último Sinal", step=0.1, group="Filtro Suporte & Resistência") / 100
 
+// --- INPUTS: FILTRO DE CONSOLIDAÇÃO (CRUZAMENTOS DA EMA 9/21) ---
+bool use_consolidation_filter = input.bool(true, title="Ativar Filtro de Consolidação (Cruzamentos)", group="Filtro de Consolidação")
+int consolidation_lookback    = input.int(20, title="Janela de Barras para Cruzamentos", group="Filtro de Consolidação")
+int max_allowed_crosses       = input.int(3, title="Máximo de Cruzamentos Permitidos", group="Filtro de Consolidação")
+
 
 // --- INPUTS: RISK MANAGEMENT & SAÍDAS PARCIAIS ---
 float tp1_pct       = input.float(1.5, title="1º Take Profit Parcial (%)", step=0.1, group="Gestão de Risco") / 100
@@ -104,6 +109,17 @@ var float last_signal_price = na
 bool price_moved_enough = not use_lat_filter or na(last_signal_price) or math.abs(close - last_signal_price) / last_signal_price > min_distance_pct
 
 
+// --- CALCULATIONS: FILTRO DE CONSOLIDAÇÃO (CORRIGIDO) ---
+bool ema_crossed_now = ta.crossover(ema9, ema21) or ta.crossunder(ema9, ema21)
+
+var int total_crosses_recent = 0
+int cross_value = ema_crossed_now ? 1 : 0
+total_crosses_recent := nz(total_crosses_recent[1]) + cross_value - (bar_index >= consolidation_lookback ? nz(cross_value[consolidation_lookback]) : 0)
+
+bool is_consolidated = use_consolidation_filter and (total_crosses_recent >= max_allowed_crosses)
+bool not_consolidated = not is_consolidated
+
+
 // --- STRATEGY CONDITIONS ---
 bool macd_cond      = ta.crossover(macd, signal_line) or (hist > 0 and hist > hist[1])
 
@@ -115,7 +131,7 @@ bool ema_cross_down_cond = ta.crossunder(ema9, ema21)
 bool trigger_buy    = macd_cond or (use_ema_cross and ema_cross_cond)
 bool rsi_cond       = not use_rsi_filter or (rsi_val > rsi_oversold and rsi_val < rsi_overbought)
 
-bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough
+bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough and not_consolidated
 
 bool sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or (use_ema_cross_down and ema_cross_down_cond)
 
@@ -140,8 +156,12 @@ if (strategy.position_size > 0)
     strategy.exit("TP2 & SL", "Buy", limit=long_tp2, stop=long_sl)
 
 
+// --- PLOTS VISUAIS DE CONSOLIDAÇÃO (BANDEIRA E FUNDO) ---
+bgcolor(is_consolidated ? color.new(color.orange, 90) : na, title="Fundo de Consolidação")
+plotshape(ta.change(is_consolidated) and is_consolidated, title="Início Consolidação", text="LATERAL", location=location.top, style=shape.flag, size=size.small, color=color.orange, textcolor=color.white)
+
+
 // --- PLOTS DE GERENCIAMENTO DE RISCO (STOP LOSS VISUAL) ---
-// Mostra a linha de Stop Loss apenas quando estiver posicionado comprado
 float plot_sl_line = strategy.position_size > 0 ? long_sl : na
 plot(plot_sl_line, color=color.red, title="Stop Loss Line", style=plot.style_linebr, linewidth=2)
 plotshape(strategy.position_size > 0 and ta.crossunder(low, long_sl), title="Stop Loss Hit", text="STOP", location=location.belowbar, style=shape.flag, size=size.small, color=color.red, textcolor=color.white)
@@ -170,13 +190,13 @@ plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.ab
 bool use_hlt          = input.bool(true, title="Ativar Indicador HLT", group="Ｓｅｔｔｉｎｇｓ")
 int length            = input(23,    group = "Ｓｅｔｔｉｎｇｓ")
 int offset            = input(4,     group = "Ｓｅｔｔｉｎｇｓ")
-series float srcc     = input(close, group = "Ｓｅｔｔｉｎｇｓ")
+series float srcc     = input(close, group = "Ｓｅｔｔｉｎｇ🇸")
 bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉｎｇｓ")
 
 // Visual
 bool bar_color        = input(false,        group = "Ｖｉｓｕａｌ")
 color color_up        = input(color.blue, group = "Ｖｉｓｕａｌ")
-color color_dn        = input(color.red,  group = "Ｖｉｓｕａl")
+color color_dn        = input(color.red,  group = "Ｖｉｓｕａｌ")
 
 
 /// INDICATOR CALCULATION ///
@@ -203,14 +223,3 @@ fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
 
 // Bar color
 barcolor(use_hlt and bar_color ? hlt_color : na)
-
-// --- CÁLCULO DE FAIXAS DE 2x ATR A PARTIR DA MÉDIA ---
-float base_ma = ta.ema(close, ma_length)
-float atr_distance = ta.atr(periods) * 2.0 // Multiplicador de 2 linhas/desvios de ATR
-
-float upper_atr_band = base_ma + atr_distance
-float lower_atr_band = base_ma - atr_distance
-
-// Condições de toque e possível reversão
-bool touch_upper_atr = high >= upper_atr_band // Preço esticado na venda (possível queda)
-bool touch_lower_atr = low <= lower_atr_band   // Preço esticado na compra (possível alta)
