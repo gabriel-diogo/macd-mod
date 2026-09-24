@@ -152,11 +152,11 @@ plot(ema80, color=color.teal, title="EMA 80", linewidth=2)
 plot(use_sr_filter ? resistance : na, color=color.new(color.red, 50), title="Resistência S&R", style=plot.style_linebr)
 plot(use_sr_filter ? support : na, color=color.new(color.green, 50), title="Suporte S&R", style=plot.style_linebr)
 
-plotshape(ema_cross_cond, title="EMA 9/21 Cross Up", text="CROSS UP", location=location.belowbar, style=shape.triangleup, size=size.tiny, color=color.blue, textcolor=color.white)
-plotshape(ema_cross_down_cond, title="EMA 9/21 Cross Down", text="CROSS DOWN", location=location.abovebar, style=shape.triangledown, size=size.tiny, color=color.fuchsia, textcolor=color.white)
+plotshape(ema_cross_cond, title="EMA 9/21 Cross Up", text="CROSS UP", location=location.belowbar, style=shape.labelup , size=size.tiny, color=color.blue, textcolor=color.white)
+plotshape(ema_cross_down_cond, title="EMA 9/21 Cross Down", text="CROSS DOWN", location=location.abovebar, style=shape.labeldown , size=size.tiny, color=color.fuchsia, textcolor=color.white)
 
-plotshape(buy_condition, title="Buy Signal", text="BUY", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
-plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
+plotshape(buy_condition, title="Buy Signal", text="BUY", location=location.belowbar,style=shape.triangleup , size=size.small, color=color.green, textcolor=color.white)
+plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.abovebar,style=shape.triangledown , size=size.small, color=color.red, textcolor=color.white)
 
 
 ///     USER INPUTS (HLT)     ///
