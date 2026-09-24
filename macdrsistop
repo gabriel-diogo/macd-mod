@@ -1,6 +1,9 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
 //@version=5
+
 strategy("PMax + MACD + RSI + MAs + S&R + Saídas Parciais", shorttitle="PMax_Complete_Partial", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
 
 // --- INPUTS: PMAX & ATR ---
 int periods         = input.int(10, title="ATR Length", group="PMax Settings")
@@ -8,16 +11,19 @@ float multiplier    = input.float(1.5, title="ATR Multiplier", step=0.1, group="
 int ma_length       = input.int(12, title="Moving Average Length", minval=1, group="PMax Settings")
 bool show_pmax      = input.bool(true, title="Show PMax Line", group="PMax Settings")
 
+
 // --- INPUTS: MACD ---
 int fast_length     = input.int(12, title="MACD Fast Length", group="MACD Settings")
 int slow_length     = input.int(26, title="MACD Slow Length", group="MACD Settings")
 int signal_length   = input.int(9, title="MACD Signal Smoothing", group="MACD Settings")
 
+
 // --- INPUTS: RSI FILTER ---
-bool use_rsi_filter = input.bool(true, title="Usar Filtro RSI", group="RSI Filter") // <--- CORRIGIDO PARA input.bool
+bool use_rsi_filter = input.bool(true, title="Usar Filtro RSI", group="RSI Filter")
 int rsi_length      = input.int(14, title="RSI Length", group="RSI Filter")
 int rsi_oversold    = input.int(40, title="RSI Min Level", group="RSI Filter")
 int rsi_overbought  = input.int(75, title="RSI Max Level", group="RSI Filter")
+
 
 // --- INPUTS: TREND MAs & TRIGGERS ---
 bool use_ma_filter  = input.bool(true, title="Use MAs Filter (9, 21, 50, 80)", group="Trend & Volume Filter")
@@ -26,6 +32,7 @@ bool use_ema_cross_down = input.bool(true, title="Use EMA 9/21 Crossunder Trigge
 bool use_vol_filter = input.bool(true, title="Use Volume Filter", group="Trend & Volume Filter")
 int vol_len         = input.int(20, title="Volume SMA Length", group="Trend & Volume Filter")
 
+
 // --- INPUTS: FILTRO DE SUPORTE E RESISTÊNCIA (ANTI-LATERALIZAÇÃO) ---
 bool use_sr_filter    = input.bool(true, title="Usar Filtro de Rompimento de Resistência (S&R)", group="Filtro Suporte & Resistência")
 int sr_len            = input.int(20, title="Período de S&R (Topos/Fundos Anteriores)", group="Filtro Suporte & Resistência")
@@ -33,11 +40,13 @@ int sr_len            = input.int(20, title="Período de S&R (Topos/Fundos Anter
 bool use_lat_filter   = input.bool(true, title="Usar Filtro de Distância (Anti-Repetição)", group="Filtro Suporte & Resistência")
 float min_distance_pct= input.float(0.6, title="Distância Mínima % do Último Sinal", step=0.1, group="Filtro Suporte & Resistência") / 100
 
+
 // --- INPUTS: RISK MANAGEMENT & SAÍDAS PARCIAIS ---
 float tp1_pct       = input.float(1.5, title="1º Take Profit Parcial (%)", step=0.1, group="Gestão de Risco") / 100
 int   tp1_qty       = input.int(50, title="Quantidade a Vender no TP1 (%)", minval=1, maxval=99, group="Gestão de Risco")
 float tp2_pct       = input.float(3.5, title="2º Take Profit Final (%)", step=0.1, group="Gestão de Risco") / 100
 float sl_pct        = input.float(1.5, title="Stop Loss (%)", step=0.1, group="Gestão de Risco") / 100
+
 
 // --- CALCULATIONS: ATR & PMAX ---
 float src           = (high + low) / 2
@@ -58,6 +67,7 @@ pmax_dir            := nz(pmax_dir[1], 1)
 pmax_dir            := pmax_dir == -1 and mavg > short_stop_prev ? 1 : pmax_dir == 1 and mavg < long_stop_prev ? -1 : pmax_dir
 float pmax          = pmax_dir == 1 ? long_stop : short_stop
 
+
 // --- CALCULATIONS: MACD ---
 float fast_ma       = ta.ema(close, fast_length)
 float slow_ma       = ta.ema(close, slow_length)
@@ -65,8 +75,10 @@ float macd          = fast_ma - slow_ma
 float signal_line   = ta.sma(macd, signal_length)
 float hist          = macd - signal_line
 
+
 // --- CALCULATIONS: RSI ---
 float rsi_val       = ta.rsi(close, rsi_length)
+
 
 // --- CALCULATIONS: MAs (9, 21, 50, 80) & VOLUME ---
 float ema9          = ta.ema(close, 9)
@@ -77,18 +89,20 @@ float ema80         = ta.ema(close, 80)
 float vol_sma       = ta.sma(volume, vol_len)
 bool volume_ok      = not use_vol_filter or (volume > vol_sma)
 
-// Filtro geral de tendência de médias
 bool ma_trend_ok    = not use_ma_filter or (close > ema50 and ema9 > ema21)
 
+
 // --- CALCULATIONS: SUPORTE E RESISTÊNCIA ---
-float resistance    = ta.highest(high[1], sr_len) 
+float resistance    = ta.highest(high[1], sr_len)
 float support       = ta.lowest(low[1], sr_len)    
 
 bool sr_ok          = not use_sr_filter or (close >= resistance or close > (support + (resistance - support) * 0.6))
 
+
 // --- CONTROLE DE REPETIÇÃO NA MESMA REGIÃO ---
 var float last_signal_price = na
 bool price_moved_enough = not use_lat_filter or na(last_signal_price) or math.abs(close - last_signal_price) / last_signal_price > min_distance_pct
+
 
 // --- STRATEGY CONDITIONS ---
 bool macd_cond      = ta.crossover(macd, signal_line) or (hist > 0 and hist > hist[1])
@@ -98,23 +112,23 @@ bool ema_cross_cond      = ta.crossover(ema9, ema21) and price_above_all_mas
 
 bool ema_cross_down_cond = ta.crossunder(ema9, ema21)
 
-// Gatilhos de Entrada
 bool trigger_buy    = macd_cond or (use_ema_cross and ema_cross_cond)
 bool rsi_cond       = not use_rsi_filter or (rsi_val > rsi_oversold and rsi_val < rsi_overbought)
 
 bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough
 
-// Venda / Saída Total por Sinal
 bool sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or (use_ema_cross_down and ema_cross_down_cond)
+
 
 // --- EXECUTION ---
 if (buy_condition)
-    last_signal_price := close 
+    last_signal_price := close
     strategy.entry("Buy", strategy.long)
 
 if (sell_condition)
-    last_signal_price := na 
+    last_signal_price := na
     strategy.close("Buy")
+
 
 // --- SAÍDAS GERIDAS (PARCIAIS E FINAIS NATIVAS) ---
 float long_tp1 = strategy.position_avg_price * (1 + tp1_pct)
@@ -124,6 +138,7 @@ float long_sl  = strategy.position_avg_price * (1 - sl_pct)
 if (strategy.position_size > 0)
     strategy.exit("TP1 Parcial", "Buy", qty_percent=tp1_qty, limit=long_tp1)
     strategy.exit("TP2 & SL", "Buy", limit=long_tp2, stop=long_sl)
+
 
 // --- PLOTS ---
 plot(show_pmax ? mavg : na, color=color.new(#0585E1, 0), linewidth=2, title="Moving Avg Line")
@@ -142,3 +157,42 @@ plotshape(ema_cross_down_cond, title="EMA 9/21 Cross Down", text="CROSS DOWN", l
 
 plotshape(buy_condition, title="Buy Signal", text="BUY", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
 plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
+
+
+///     USER INPUTS (HLT)     ///
+bool use_hlt          = input.bool(true, title="Ativar Indicador HLT", group="Ｓｅｔｔｉｎｇｓ")
+int length            = input(23,    group = "Ｓｅｔｔｉｎｇｓ")
+int offset            = input(4,     group = "Ｓｅｔｔｉｎｇｓ")
+series float srcc     = input(close, group = "Ｓｅｔｔｉｎｇｓ")
+bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉｎｇｓ")
+
+// Visual
+bool bar_color        = input(false,        group = "Ｖｉｓｕａｌ")
+color color_up        = input(color.blue, group = "Ｖｉｓｕａｌ")
+color color_dn        = input(color.red,  group = "Ｖｉｓｕａլ")
+
+
+/// INDICATOR CALCULATION ///
+var series float hlt = 0.0
+series float  upper = ta.highest(Use_High_and_Low ? high : srcc, length)[offset]
+series float  lower = ta.lowest( Use_High_and_Low ? low : srcc, length)[offset]
+
+hlt :=  srcc > upper ?
+         lower : srcc < lower ?
+          upper : nz(hlt)
+
+
+///       PLOT        ///
+color hlt_color = srcc >= hlt ? color_up : color_dn
+
+p1 = plot(use_hlt ? hlt : na,
+         color = hlt_color,
+         style = plot.style_cross
+         )
+         
+p2 = plot(use_hlt ? srcc : na, display = display.none)
+
+fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
+
+// Bar color
+barcolor(use_hlt and bar_color ? hlt_color : na)
