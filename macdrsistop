@@ -40,6 +40,7 @@ int sr_len            = input.int(20, title="Período de S&R (Topos/Fundos Anter
 bool use_lat_filter   = input.bool(true, title="Usar Filtro de Distância (Anti-Repetição)", group="Filtro Suporte & Resistência")
 float min_distance_pct= input.float(0.6, title="Distância Mínima % do Último Sinal", step=0.1, group="Filtro Suporte & Resistência") / 100
 
+
 // --- INPUTS: FILTRO DE CONSOLIDAÇÃO (CRUZAMENTOS DA EMA 9/21) ---
 bool use_consolidation_filter = input.bool(true, title="Ativar Filtro de Consolidação (Cruzamentos)", group="Filtro de Consolidação")
 int consolidation_lookback    = input.int(20, title="Janela de Barras para Cruzamentos", group="Filtro de Consolidação")
@@ -109,7 +110,7 @@ var float last_signal_price = na
 bool price_moved_enough = not use_lat_filter or na(last_signal_price) or math.abs(close - last_signal_price) / last_signal_price > min_distance_pct
 
 
-// --- CALCULATIONS: FILTRO DE CONSOLIDAÇÃO (CORRIGIDO) ---
+// --- CALCULATIONS: FILTRO DE CONSOLIDAÇÃO ---
 bool ema_crossed_now = ta.crossover(ema9, ema21) or ta.crossunder(ema9, ema21)
 
 var int total_crosses_recent = 0
@@ -120,12 +121,11 @@ bool is_consolidated = use_consolidation_filter and (total_crosses_recent >= max
 bool not_consolidated = not is_consolidated
 
 
-// --- STRATEGY CONDITIONS ---
+// --- STRATEGY CONDITIONS V2.0 ---
 bool macd_cond      = ta.crossover(macd, signal_line) or (hist > 0 and hist > hist[1])
 
 bool price_above_all_mas = close > ema9 and close > ema21 and close > ema50 and close > ema80
 bool ema_cross_cond      = ta.crossover(ema9, ema21) and price_above_all_mas
-
 bool ema_cross_down_cond = ta.crossunder(ema9, ema21)
 
 bool trigger_buy    = macd_cond or (use_ema_cross and ema_cross_cond)
@@ -133,27 +133,32 @@ bool rsi_cond       = not use_rsi_filter or (rsi_val > rsi_oversold and rsi_val 
 
 bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough and not_consolidated
 
-bool sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or (use_ema_cross_down and ema_cross_down_cond)
+// --- VENDA V2: NÃO VENDE EM LATERAL, SÓ SE PERDER SUPORTE ---
+bool raw_sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or (use_ema_cross_down and ema_cross_down_cond)
+
+// Se está em consolidação, só autoriza venda se perder o suporte do range
+bool sell_allowed   = not is_consolidated or close < support
+bool sell_condition = raw_sell_condition and sell_allowed
 
 
-// --- EXECUTION ---
+// --- EXECUTION V2 ---
 if (buy_condition)
     last_signal_price := close
     strategy.entry("Buy", strategy.long)
 
-if (sell_condition)
+if (sell_condition and strategy.position_size > 0)
     last_signal_price := na
-    strategy.close("Buy")
+    strategy.close("Buy", comment="Saída Tendência")
 
 
-// --- SAÍDAS GERIDAS (PARCIAIS E FINAIS NATIVAS) ---
+// --- SAÍDAS GERIDAS (SEM CONFLITO) ---
 float long_tp1 = strategy.position_avg_price * (1 + tp1_pct)
 float long_tp2 = strategy.position_avg_price * (1 + tp2_pct)
 float long_sl  = strategy.position_avg_price * (1 - sl_pct)
 
 if (strategy.position_size > 0)
-    strategy.exit("TP1 Parcial", "Buy", qty_percent=tp1_qty, limit=long_tp1)
-    strategy.exit("TP2 & SL", "Buy", limit=long_tp2, stop=long_sl)
+    strategy.exit("TP1 Parcial", "Buy", qty_percent=tp1_qty, limit=long_tp1, comment="TP1 50%")
+    strategy.exit("TP2 & SL", "Buy", limit=long_tp2, stop=long_sl, comment="TP2 / SL")
 
 
 // --- PLOTS VISUAIS DE CONSOLIDAÇÃO (BANDEIRA E FUNDO) ---
@@ -190,7 +195,7 @@ plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.ab
 bool use_hlt          = input.bool(true, title="Ativar Indicador HLT", group="Ｓｅｔｔｉｎｇｓ")
 int length            = input(23,    group = "Ｓｅｔｔｉｎｇｓ")
 int offset            = input(4,     group = "Ｓｅｔｔｉｎｇｓ")
-series float srcc     = input(close, group = "Ｓｅｔｔｉｎｇ🇸")
+series float srcc     = input(close, group = "Ｓｅｔｔｉｎｇｓ")
 bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉｎｇｓ")
 
 // Visual
@@ -219,6 +224,10 @@ p1 = plot(use_hlt ? hlt : na,
          
 p2 = plot(use_hlt ? srcc : na, display = display.none)
 
+fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
+
+// Bar color
+barcolor(use_hlt and bar_color ? hlt_color : na)
 fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
 
 // Bar color
