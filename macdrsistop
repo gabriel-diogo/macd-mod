@@ -140,6 +140,7 @@ bool raw_sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, sign
 bool sell_allowed   = not is_consolidated or close < support
 bool sell_condition = raw_sell_condition and sell_allowed
 
+
 // --- EXECUTION V2 ---
 if (buy_condition)
     last_signal_price := close
@@ -148,9 +149,6 @@ if (buy_condition)
 if (sell_condition and strategy.position_size > 0)
     last_signal_price := na
     strategy.close("Buy", comment="Saída Tendência")
-
-
-
 
 
 // --- SAÍDAS GERIDAS (SEM CONFLITO) ---
@@ -198,7 +196,7 @@ bool use_hlt          = input.bool(true, title="Ativar Indicador HLT", group="�
 int length            = input(23,    group = "Ｓｅｔｔｉｎｇｓ")
 int offset            = input(4,     group = "Ｓｅｔｔｉｎｇｓ")
 series float srcc     = input(close, group = "Ｓｅｔｔｉｎｇｓ")
-bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉ\nngs")
+bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉｎｇｓ")
 
 // Visual
 bool bar_color        = input(false,        group = "Ｖｉｓｕａｌ")
@@ -231,13 +229,14 @@ fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
 // Bar color
 barcolor(use_hlt and bar_color ? hlt_color : na)
 
+
 // ChartArt's MACD + SMA 200 Strategy
 //
 // Version 1.0 / Converted to Version 5
 // Idea by ChartArt on November 30, 2015.
 
 // Input
-enable_macd200 = input.bool(true, title="Ativar Bloco MACD 200 (Estratégia + Plots)") // <--- BOTÃO MESTRE PARA O BLOCO INTEIRO
+enable_macd200 = input.bool(true, title="Ativar Bloco MACD 200 (Estratégia + Plots)")
 source = input.source(close, title="Source")
 fastLength = input.int(12, minval=1, title="MACD fast moving average")
 slowLength = input.int(26, minval=1, title="MACD slow moving average")
@@ -292,7 +291,3 @@ if (enable_macd200)
 
 maxIdLossPcnt = input.float(50, "Max Intraday Loss(%)")
 strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
-fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
-
-// Bar color
-barcolor(use_hlt and bar_color ? hlt_color : na)
