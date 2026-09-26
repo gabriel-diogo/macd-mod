@@ -140,7 +140,6 @@ bool raw_sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, sign
 bool sell_allowed   = not is_consolidated or close < support
 bool sell_condition = raw_sell_condition and sell_allowed
 
-
 // --- EXECUTION V2 ---
 if (buy_condition)
     last_signal_price := close
@@ -149,6 +148,9 @@ if (buy_condition)
 if (sell_condition and strategy.position_size > 0)
     last_signal_price := na
     strategy.close("Buy", comment="Saída Tendência")
+
+
+
 
 
 // --- SAÍDAS GERIDAS (SEM CONFLITO) ---
@@ -184,11 +186,11 @@ plot(ema80, color=color.teal, title="EMA 80", linewidth=2)
 plot(use_sr_filter ? resistance : na, color=color.new(color.red, 50), title="Resistência S&R", style=plot.style_linebr)
 plot(use_sr_filter ? support : na, color=color.new(color.green, 50), title="Suporte S&R", style=plot.style_linebr)
 
-plotshape(ema_cross_cond, title="EMA 9/21 Cross Up", text="CROSS UP", location=location.belowbar, style=shape.triangleup, size=size.tiny, color=color.blue, textcolor=color.white)
-plotshape(ema_cross_down_cond, title="EMA 9/21 Cross Down", text="CROSS DOWN", location=location.abovebar, style=shape.triangledown, size=size.tiny, color=color.fuchsia, textcolor=color.white)
+plotshape(ema_cross_cond, title="EMA 9/21 Cross Up", text="buy", location=location.belowbar, style=shape.triangleup, size=size.tiny, color=color.blue, textcolor=color.white)
+plotshape(ema_cross_down_cond, title="EMA 9/21 Cross Down", text="sell", location=location.abovebar, style=shape.triangledown, size=size.tiny, color=color.fuchsia, textcolor=color.white)
 
-plotshape(buy_condition, title="Buy Signal", text="BUY", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
-plotshape(sell_condition, title="Sell Signal", text="SELL", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
+plotshape(buy_condition, title="Buy Signal", text="B", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
+plotshape(sell_condition, title="Sell Signal", text="S", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
 
 
 ///     USER INPUTS (HLT)     ///
@@ -196,7 +198,7 @@ bool use_hlt          = input.bool(true, title="Ativar Indicador HLT", group="�
 int length            = input(23,    group = "Ｓｅｔｔｉｎｇｓ")
 int offset            = input(4,     group = "Ｓｅｔｔｉｎｇｓ")
 series float srcc     = input(close, group = "Ｓｅｔｔｉｎｇｓ")
-bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉｎｇｓ")
+bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉ\nngs")
 
 // Visual
 bool bar_color        = input(false,        group = "Ｖｉｓｕａｌ")
@@ -214,7 +216,7 @@ hlt :=  srcc > upper ?
           upper : nz(hlt)
 
 
-///       PLOT        ///
+///         PLOT        ///
 color hlt_color = srcc >= hlt ? color_up : color_dn
 
 p1 = plot(use_hlt ? hlt : na,
@@ -228,6 +230,68 @@ fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
 
 // Bar color
 barcolor(use_hlt and bar_color ? hlt_color : na)
+
+// ChartArt's MACD + SMA 200 Strategy
+//
+// Version 1.0 / Converted to Version 5
+// Idea by ChartArt on November 30, 2015.
+
+// Input
+enable_macd200 = input.bool(true, title="Ativar Bloco MACD 200 (Estratégia + Plots)") // <--- BOTÃO MESTRE PARA O BLOCO INTEIRO
+source = input.source(close, title="Source")
+fastLength = input.int(12, minval=1, title="MACD fast moving average")
+slowLength = input.int(26, minval=1, title="MACD slow moving average")
+signalLength = input.int(9, minval=1, title="MACD signal line moving average")
+veryslowLength = input.int(200, minval=1, title="Very slow moving average")
+switch1 = input.bool(true, title="Enable Bar Color?")
+switch2 = input.bool(true, title="Enable Moving Averages?")
+switch3 = input.bool(true, title="Enable Background Color?")
+switch_veryslow = input.bool(true, title="Enable MACD 200 (Very Slow MA & Fill)?")
+
+// Calculation
+fastMA = ta.sma(source, fastLength)
+slowMA = ta.sma(source, slowLength)
+veryslowMA = ta.sma(source, veryslowLength)
+macdd = fastMA - slowMA
+signal = ta.sma(macdd, signalLength)
+histt = macdd - signal
+
+// Colors
+MAtrendcolor = ta.change(veryslowMA) > 0 ? color.green : color.red
+trendcolor = fastMA > slowMA and ta.change(veryslowMA) > 0 and close > slowMA ? color.green : fastMA < slowMA and ta.change(veryslowMA) < 0 and close < slowMA ? color.red : color.blue
+bartrendcolor = close > fastMA and close > slowMA and close > veryslowMA and ta.change(slowMA) > 0 ? color.green : close < fastMA and close < slowMA and close < veryslowMA and ta.change(slowMA) < 0 ? color.red : color.blue
+backgroundcolor = slowMA > veryslowMA and ta.crossover(histt, 0) and macdd > 0 and fastMA > slowMA and close[slowLength] > veryslowMA ? color.green : slowMA < veryslowMA and ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA ? color.red : na
+
+bgcolor(enable_macd200 and switch3 ? backgroundcolor : na, color = color.new(backgroundcolor, 80))
+barcolor(enable_macd200 and switch1 ? bartrendcolor : na)
+
+// Output
+F = plot(enable_macd200 and switch2 ? fastMA : na, color=trendcolor)
+S = plot(enable_macd200 and switch2 ? slowMA : na, color=trendcolor, linewidth=2)
+V = plot(enable_macd200 and switch_veryslow and switch2 ? veryslowMA : na, color=MAtrendcolor, linewidth=4)
+fill(F, V, color=enable_macd200 and switch_veryslow ? color.new(color.blue, 95) : na)
+
+// Strategy
+buyprice = low
+sellprice = high
+cancelLong = slowMA < veryslowMA
+cancelShort = slowMA > veryslowMA
+
+if (enable_macd200)
+    if (cancelLong)
+        strategy.cancel("MACDLE")
+
+    if ta.crossover(histt, 0) and macdd > 0 and fastMA > slowMA and close[slowLength] > veryslowMA 
+        strategy.entry("MACDLE", strategy.long, stop=buyprice, comment="Bullish")
+
+    if (cancelShort)
+        strategy.cancel("MACDSE")
+
+    if ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA 
+        strategy.entry("MACDSE", strategy.short, stop=sellprice, comment="Bearish")
+
+maxIdLossPcnt = input.float(50, "Max Intraday Loss(%)")
+strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
 fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
 
 // Bar color
