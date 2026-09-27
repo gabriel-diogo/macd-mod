@@ -33,6 +33,11 @@ bool use_vol_filter = input.bool(true, title="Use Volume Filter", group="Trend &
 int vol_len         = input.int(20, title="Volume SMA Length", group="Trend & Volume Filter")
 
 
+// --- INPUTS: FILTRO MULTI-TIMEFRAME (TEMPO GRÁFICO MAIOR COM TRATAMENTO DE ERRO) ---
+bool use_htf_filter   = input.bool(true, title="Ativar Filtro de Tempo Gráfico Maior", group="Filtro Multi-Timeframe")
+string htf_resolution = input.timeframe("240", title="Resolução HTF (240 = 4h, D = Diário)", group="Filtro Multi-Timeframe")
+
+
 // --- INPUTS: FILTRO DE SUPORTE E RESISTÊNCIA (ANTI-LATERALIZAÇÃO) ---
 bool use_sr_filter    = input.bool(true, title="Usar Filtro de Rompimento de Resistência (S&R)", group="Filtro Suporte & Resistência")
 int sr_len            = input.int(20, title="Período de S&R (Topos/Fundos Anteriores)", group="Filtro Suporte & Resistência")
@@ -98,6 +103,18 @@ bool volume_ok      = not use_vol_filter or (volume > vol_sma)
 bool ma_trend_ok    = not use_ma_filter or (close > ema50 and ema9 > ema21)
 
 
+// --- CALCULATIONS: MULTI-TIMEFRAME (COM TRATAMENTO DE ERRO/FALLBACK) ---
+// Busca dados do tempo gráfico maior de forma segura (sem repintura e protegendo contra valores nulos)
+float raw_htf_close = request.security(syminfo.tickerid, htf_resolution, close[1], barmerge.gaps_off, barmerge.lookahead_off)
+float raw_htf_ema50 = request.security(syminfo.tickerid, htf_resolution, ta.ema(close, 50)[1], barmerge.gaps_off, barmerge.lookahead_off)
+
+// Tratamento de erro: se houver falha de dados no HTF, assume o valor atual para não quebrar a estratégia
+float safe_htf_close = nz(raw_htf_close, close)
+float safe_htf_ema50 = nz(raw_htf_ema50, close)
+
+bool htf_trend_ok   = not use_htf_filter or (safe_htf_close > safe_htf_ema50)
+
+
 // --- CALCULATIONS: SUPORTE E RESISTÊNCIA ---
 float resistance    = ta.highest(high[1], sr_len)
 float support       = ta.lowest(low[1], sr_len)    
@@ -131,7 +148,8 @@ bool ema_cross_down_cond = ta.crossunder(ema9, ema21)
 bool trigger_buy    = macd_cond or (use_ema_cross and ema_cross_cond)
 bool rsi_cond       = not use_rsi_filter or (rsi_val > rsi_oversold and rsi_val < rsi_overbought)
 
-bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough and not_consolidated
+// Compra exige aprovação de todos os filtros, incluindo o HTF seguro
+bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough and not_consolidated and htf_trend_ok
 
 // --- VENDA V2: NÃO VENDE EM LATERAL, SÓ SE PERDER SUPORTE ---
 bool raw_sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or (use_ema_cross_down and ema_cross_down_cond)
@@ -174,8 +192,7 @@ plotshape(strategy.position_size > 0 and ta.crossunder(low, long_sl), title="Sto
 
 // --- PLOTS ---
 plot(show_pmax ? mavg : na, color=color.new(#0585E1, 0), linewidth=2, title="Moving Avg Line")
-plot(pmax, color=pmax_dir == 1 ? color.green : color.red, linewidth=2, title="PMax Stop Line")
-
+plot(pmax, color=pmax_dir == 1 ? #00d9ff : #ff00f2, linewidth=2, title="PMax Stop Line")
 plot(ema9, color=color.yellow, title="EMA 9", linewidth=2)
 plot(ema21, color=color.orange, title="EMA 21", linewidth=2)
 plot(ema50, color=color.purple, title="EMA 50", linewidth=1)
@@ -201,7 +218,7 @@ bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉｎｇｓ")
 // Visual
 bool bar_color        = input(false,        group = "Ｖｉｓｕａｌ")
 color color_up        = input(color.blue, group = "Ｖｉｓｕａｌ")
-color color_dn        = input(color.red,  group = "Ｖｉｓｕａｌ")
+color color_dn        = input(color.red,  group = "Ｖｉｓｕａl")
 
 
 /// INDICATOR CALCULATION ///
@@ -256,10 +273,10 @@ signal = ta.sma(macdd, signalLength)
 histt = macdd - signal
 
 // Colors
-MAtrendcolor = ta.change(veryslowMA) > 0 ? color.green : color.red
-trendcolor = fastMA > slowMA and ta.change(veryslowMA) > 0 and close > slowMA ? color.green : fastMA < slowMA and ta.change(veryslowMA) < 0 and close < slowMA ? color.red : color.blue
+MAtrendcolor = ta.change(veryslowMA) > 0 ? #7ef131 : #e92063
+trendcolor = fastMA > slowMA and ta.change(veryslowMA) > 0 and close > slowMA ? #49fd49 : fastMA < slowMA and ta.change(veryslowMA) < 0 and close < slowMA ? color.red : color.blue
 bartrendcolor = close > fastMA and close > slowMA and close > veryslowMA and ta.change(slowMA) > 0 ? color.green : close < fastMA and close < slowMA and close < veryslowMA and ta.change(slowMA) < 0 ? color.red : color.blue
-backgroundcolor = slowMA > veryslowMA and ta.crossover(histt, 0) and macdd > 0 and fastMA > slowMA and close[slowLength] > veryslowMA ? color.green : slowMA < veryslowMA and ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA ? color.red : na
+backgroundcolor = slowMA > veryslowMA and ta.crossover(histt, 0) and macdd > 0 and fastMA > slowMA and close[slowLength] > veryslowMA ? #32fd32 : slowMA < veryslowMA and ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA ? color.red : na
 
 bgcolor(enable_macd200 and switch3 ? backgroundcolor : na, color = color.new(backgroundcolor, 80))
 barcolor(enable_macd200 and switch1 ? bartrendcolor : na)
@@ -288,6 +305,9 @@ if (enable_macd200)
 
     if ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA 
         strategy.entry("MACDSE", strategy.short, stop=sellprice, comment="Bearish")
+
+maxIdLossPcnt = input.float(50, "Max Intraday Loss(%)")
+strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
 
 maxIdLossPcnt = input.float(50, "Max Intraday Loss(%)")
 strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
