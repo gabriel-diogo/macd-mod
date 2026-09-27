@@ -192,8 +192,7 @@ plot(show_pmax ? mavg : na, color=color.new(#0585E1, 0), linewidth=2, title="Mov
 plot(pmax, color=pmax_dir == 1 ? #00d9ff : #ff00f2, linewidth=2, title="PMax Stop Line")
 plot(ema9, color=color.yellow, title="EMA 9", linewidth=2)
 plot(ema21, color=color.orange, title="EMA 21", linewidth=2)
-plot(ema50, color=color.purple, title="EMA 50", linewidth=1)
-plot(ema80, color=color.teal, title="EMA 80", linewidth=2)
+plot(ema50, color=color.red, title="EMA 50", linewidth=1)
 
 plot(use_sr_filter ? resistance : na, color=color.new(color.red, 50), title="Resistência S&R", style=plot.style_linebr)
 plot(use_sr_filter ? support : na, color=color.new(color.green, 50), title="Suporte S&R", style=plot.style_linebr)
@@ -210,7 +209,7 @@ bool use_hlt          = input.bool(true, title="Ativar Indicador HLT", group="�
 int length            = input(23,    group = "Ｓｅｔｔｉｎｇｓ")
 int offset            = input(4,     group = "Ｓｅｔｔｉｎｇｓ")
 series float srcc     = input(close, group = "Ｓｅｔｔｉｎｇｓ")
-bool Use_High_and_Low = input(false, group = "Ｓｅ𝘁ｔｉｎｇｓ")
+bool Use_High_and_Low = input(false, group = "Ｓｅｔｔｉｎｇｓ")
 
 bool bar_color        = input(false,        group = "Ｖｉｓｕａｌ")
 color color_up        = input(color.blue, group = "Ｖｉｓｕａｌ")
@@ -278,6 +277,17 @@ if (enable_macd200)
     if ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA 
         strategy.entry("MACDSE", strategy.short, stop=sellprice, comment="Bearish")
 
+maxIdLossPcnt = input.float(50, "Max Intraday Loss(%)")
+strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
+
+// --- EMA 80 COLORIDA POR POSIÇÃO EM RELAÇÃO AO PREÇO ---
+bool condAltaEma80 = (ema80 < close) // Média abaixo do preço = Verde
+bool condBaixaEma80 = (ema80 > close) // Média acima do preço = Vermelho
+
+color corEma80 = condAltaEma80 ? color.new(#32fd32, 0) : condBaixaEma80 ? color.red : color.gray
+
+// Plota a EMA 80 colorida no gráfico
+plot(ema80, title="EMA 80 Colorida", color=corEma80, linewidth=3)
 maxIdLossPcnt = input.float(50, "Max Intraday Loss(%)")
 strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
 maxIdLossPcnt = input.float(50, "Max Intraday Loss(%)")
