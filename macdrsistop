@@ -107,7 +107,20 @@ var int total_crosses_recent = 0
 int cross_value = ema_crossed_now ? 1 : 0
 total_crosses_recent := nz(total_crosses_recent[1]) + cross_value - (bar_index >= consolidation_lookback ? nz(cross_value[consolidation_lookback]) : 0)
 
-bool is_consolidated = use_consolidation_filter and (total_crosses_recent >= max_allowed_crosses)
+//bool is_consolidated = use_consolidation_filter and (total_crosses_recent >= max_allowed_crosses)
+//bool not_consolidated = not is_consolidated
+
+// --- CALCULATIONS: FILTRO DE CONSOLIDAÇÃO ---
+//bool ema_crossed_now = ta.crossover(ema9, ema21) or ta.crossunder(ema9, ema21)
+//var int total_crosses_recent = 0
+//int cross_value = ema_crossed_now ? 1 : 0
+//otal_crosses_recent := nz(total_crosses_recent[1]) + cross_value - (bar_index >= consolidation_lookback ? nz(cross_value[consolidation_lookback]) : 0)
+
+// Checa se o tempo gráfico é maior que 1 Dia (Semanal, Mensal, etc.)
+bool tempo_grafico_maior_que_1d = timeframe.isdaily or timeframe.isweekly or (timeframe.ismonthly and timeframe.multiplier > 1)
+
+// Se for maior que 1D, desativa a consolidação (is_consolidated passa a ser false)
+bool is_consolidated = use_consolidation_filter and not tempo_grafico_maior_que_1d and (total_crosses_recent >= max_allowed_crosses)
 bool not_consolidated = not is_consolidated
 
 // --- STRATEGY CONDITIONS V3.0 (DESDOBRADA) ---
@@ -162,7 +175,7 @@ if (strategy.position_size > 0)
     strategy.exit("TP2 & SL Early", "Buy Early", limit=long_tp2, stop=long_sl, comment="TP2 / SL")
 
 // --- PLOTS VISUAIS DE CONSOLIDAÇÃO ---
-bgcolor(is_consolidated ? color.new(color.orange, 90) : na, title="Fundo de Consolidação")
+bgcolor(is_consolidated ? color.new(color.orange, 98) : na, title="Fundo de Consolidação")
 plotshape(ta.change(is_consolidated) and is_consolidated, title="Início Consolidação", text="LATERAL", location=location.top, style=shape.flag, size=size.small, color=color.orange, textcolor=color.white)
 
 // --- PLOTS DE GERENCIAMENTO DE RISCO ---
@@ -280,5 +293,5 @@ bool adx_bullish      = not use_adx_filter or (p_di > m_di)
 bool adx_bearish      = not use_adx_filter or (m_di > p_di)
 
 // --- PLOT VISUAL ADX (Opcional para ver o fundo pintado conforme a direção forte) ---
-bgcolor(use_adx_filter and adx > adx_threshold and p_di > m_di ? color.new(color.blue, 95) : na, title="Fundo Tendência de Alta ADX")
+bgcolor(use_adx_filter and adx > adx_threshold and p_di > m_di ? color.new(color.green, 95) : na, title="Fundo Tendência de Alta ADX")
 bgcolor(use_adx_filter and adx > adx_threshold and m_di > p_di ? color.new(color.red, 95) : na, title="Fundo Tendência de Baixa ADX")
