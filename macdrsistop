@@ -295,3 +295,32 @@ bool adx_bearish      = not use_adx_filter or (m_di > p_di)
 // --- PLOT VISUAL ADX (Opcional para ver o fundo pintado conforme a direção forte) ---
 bgcolor(use_adx_filter and adx > adx_threshold and p_di > m_di ? color.new(color.green, 95) : na, title="Fundo Tendência de Alta ADX")
 bgcolor(use_adx_filter and adx > adx_threshold and m_di > p_di ? color.new(color.red, 95) : na, title="Fundo Tendência de Baixa ADX")
+
+// --- GESTÃO DE RISCO 1:3 & SAÍDA TÉCNICA POR CRUZAMENTO ---
+
+// Inputs para a relação 1:3 baseada na porcentagem do Stop Loss existente
+float risk_sl_pct   = sl_pct / 100
+float risk_tp_pct   = (sl_pct * 3.0) / 100 // Alvo automático de 3x o Stop Loss
+
+// Condição de saída técnica por cruzamento de médias (Cruzou para baixo)
+bool technical_exit = ta.crossunder(ema9, ema21) or ta.crossunder(close, pmax)
+
+// Executa a saída técnica se houver posição aberta
+if (technical_exit and strategy.position_size > 0)
+    last_signal_price := na
+    strategy.close("Buy Early", comment="Saída Cruzamento Média")
+    strategy.close("Buy", comment="Saída Rompimento Cruzamento")
+
+// Aplica as ordens de Stop Loss e Take Profit (1:3) para as entradas ativas
+if (strategy.position_size > 0)
+    // Pega o preço médio da operação atual para calcular os limites exatos
+    float current_entry_price = strategy.opentrades.entry_price(0)
+    
+    float target_price = current_entry_price * (1 + risk_tp_pct)
+    float stop_price   = current_entry_price * (1 - risk_sl_pct)
+
+    // Alvo e Stop para a Compra Antecipada (BE)
+    strategy.exit("SL/TP Early", "Buy Early", limit=target_price, stop=stop_price, comment_loss="SL 1:3", comment_profit="TP 1:3")
+    
+    // Alvo e Stop para a Compra de Rompimento (B)
+    strategy.exit("SL/TP Rompimento", "Buy", limit=target_price, stop=stop_price, comment_loss="SL 1:3", comment_profit="TP 1:3")
