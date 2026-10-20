@@ -43,11 +43,18 @@ bool use_consolidation_filter = input.bool(true, title="Ativar Filtro de Consoli
 int consolidation_lookback    = input.int(20, title="Janela de Barras para Cruzamentos", group="Filtro de Consolidação")
 int max_allowed_crosses       = input.int(3, title="Máximo de Cruzamentos Permitidos", group="Filtro de Consolidação")
 
-// --- INPUTS: RISK MANAGEMENT & SAÍDAS PARCIAIS ---
-float tp1_pct       = input.float(1.5, title="1º Take Profit Parcial (%)", step=0.1, group="Gestão de Risco")
-int   tp1_qty       = input.int(50, title="Quantidade a Vender no TP1 (%)", minval=1, maxval=99, group="Gestão de Risco")
-float tp2_pct       = input.float(3.5, title="2º Take Profit Final (%)", step=0.1, group="Gestão de Risco")
-float sl_pct        = input.float(1.5, title="Stop Loss (%)", step=0.1, group="Gestão de Risco")
+// --- INPUTS: RISK MANAGEMENT & TRAILING STOP ---
+float sl_pct        = input.float(1.5, title="Stop Loss Inicial (%)", step=0.1, group="Gestão de Risco")
+bool use_trail      = input.bool(true, title="Ativar Trailing Stop Dinâmico (PMax)", group="Gestão de Risco")
+
+// --- INPUTS: EMA WAVE (34) ---
+bool use_ema_wave     = input.bool(true, title="Ativar EMA Wave (34) Plots e Cores", group="EMA Wave 34")
+int wave_period       = input.int(34, title="Período EMA Wave", group="EMA Wave 34")
+
+// --- INPUTS: FILTRO ADX (DIRECIONAL) ---
+bool use_adx_filter   = input.bool(true, title="Ligar / Desligar Filtro ADX", group="Filtro ADX")
+int adx_len           = input.int(14, title="ADX Smoothing Length", group="Filtro ADX")
+int adx_threshold     = input.int(20, title="ADX Tendência Mínima (Forte se > 20)", group="Filtro ADX")
 
 // --- CALCULATIONS: ATR & PMAX ---
 float src           = (high + low) / 2
@@ -87,6 +94,16 @@ float vol_sma       = ta.sma(volume, vol_len)
 bool volume_ok      = not use_vol_filter or (volume > vol_sma)
 bool ma_trend_ok    = not use_ma_filter or (close > ema50 and ema9 > ema21)
 
+// --- CALCULATIONS: EMA WAVE (34) ---
+float emaWaveHigh   = ta.ema(high, wave_period)
+float emaWaveClose  = ta.ema(close, wave_period)
+float emaWaveLow    = ta.ema(low, wave_period)
+color wave_bar_color = close > emaWaveHigh ? color.green : close < emaWaveLow ? color.red : color.blue
+
+// --- CALCULATIONS: ADX & DIRECIONAL ---
+[p_di, m_di, adx] = ta.dmi(adx_len, adx_len)
+bool adx_red_zone = not use_adx_filter or (adx > adx_threshold and m_di > p_di)
+
 // --- CALCULATIONS: MULTI-TIMEFRAME SEGURO ---
 float raw_htf_close = request.security(syminfo.tickerid, htf_resolution, close[1], barmerge.gaps_off, barmerge.lookahead_off)
 float raw_htf_ema   = request.security(syminfo.tickerid, htf_resolution, ta.ema(close, 50)[1], barmerge.gaps_off, barmerge.lookahead_off)
@@ -107,45 +124,28 @@ var int total_crosses_recent = 0
 int cross_value = ema_crossed_now ? 1 : 0
 total_crosses_recent := nz(total_crosses_recent[1]) + cross_value - (bar_index >= consolidation_lookback ? nz(cross_value[consolidation_lookback]) : 0)
 
-//bool is_consolidated = use_consolidation_filter and (total_crosses_recent >= max_allowed_crosses)
-//bool not_consolidated = not is_consolidated
-
-// --- CALCULATIONS: FILTRO DE CONSOLIDAÇÃO ---
-//bool ema_crossed_now = ta.crossover(ema9, ema21) or ta.crossunder(ema9, ema21)
-//var int total_crosses_recent = 0
-//int cross_value = ema_crossed_now ? 1 : 0
-//otal_crosses_recent := nz(total_crosses_recent[1]) + cross_value - (bar_index >= consolidation_lookback ? nz(cross_value[consolidation_lookback]) : 0)
-
-// Checa se o tempo gráfico é maior que 1 Dia (Semanal, Mensal, etc.)
 bool tempo_grafico_maior_que_1d = timeframe.isdaily or timeframe.isweekly or (timeframe.ismonthly and timeframe.multiplier > 1)
-
-// Se for maior que 1D, desativa a consolidação (is_consolidated passa a ser false)
 bool is_consolidated = use_consolidation_filter and not tempo_grafico_maior_que_1d and (total_crosses_recent >= max_allowed_crosses)
 bool not_consolidated = not is_consolidated
 
-// --- STRATEGY CONDITIONS V3.0 (DESDOBRADA) ---
-bool macd_cond      = ta.crossover(macd, signal_line) or (hist > 0 and hist > hist[1])
+// --- STRATEGY CONDITIONS ---
+bool macd_cond          = ta.crossover(macd, signal_line) or (hist > 0 and hist > hist[1])
 bool price_above_all_mas = close > ema9 and close > ema21 and close > ema50 and close > ema80
 bool ema_cross_cond      = ta.crossover(ema9, ema21) and price_above_all_mas
 bool ema_cross_down_cond = ta.crossunder(ema9, ema21)
 
-bool trigger_buy    = macd_cond or (use_ema_cross and ema_cross_cond)
-bool rsi_cond       = not use_rsi_filter or (rsi_val > rsi_oversold and rsi_val < rsi_overbought)
+bool trigger_buy        = macd_cond or (use_ema_cross and ema_cross_cond)
+bool rsi_cond           = not use_rsi_filter or (rsi_val > rsi_oversold and rsi_val < rsi_overbought)
 
-// 1. Antecipada (Compra I/BE): suporte, consolidação E acima das médias 50 e 80
 bool buy_early_condition = close > support and close <= pmax and close > ema50 and ma_trend_ok and sr_ok and is_consolidated and rsi_cond
-// 1. Antecipada: compra no suporte, dentro da consolidação
-//bool buy_early_condition = close > support and close <= pmax and ma_trend_ok and sr_ok and is_consolidated and rsi_cond
+bool buy_condition      = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough and not_consolidated and htf_trend_ok
 
-// 2. Confirmada: buy original com filtro de rompimento
-bool buy_condition  = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough and not is_consolidated and htf_trend_ok
-
-// --- VENDA ---
+// --- CONDIÇÕES DE SAÍDA / VENDA FILTRADAS PELA ZONA VERMELHA DO ADX ---
 bool raw_sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or (use_ema_cross_down and ema_cross_down_cond)
-bool sell_allowed   = not is_consolidated or close < support
-bool sell_condition = raw_sell_condition and sell_allowed
+bool sell_allowed       = (not is_consolidated or close < support) and adx_red_zone
+bool sell_condition     = raw_sell_condition and sell_allowed
 
-// --- EXECUTION V3 ---
+// --- EXECUTION ---
 if (buy_early_condition)
     last_signal_price := close
     strategy.entry("Buy Early", strategy.long, comment="Buy Antecipado SR")
@@ -159,30 +159,41 @@ if (sell_condition and strategy.position_size > 0)
     strategy.close("Buy", comment="Saída Tendência")
     strategy.close("Buy Early", comment="Saída Tendência Early")
 
-// --- SAÍDAS GERIDAS (SEM CONFLITO) ---
-float tp1_pct_val = tp1_pct / 100
-float tp2_pct_val = tp2_pct / 100
-float sl_pct_val  = sl_pct / 100
+// --- GESTÃO DE RISCO 1:3 & TRAILING STOP DINÂMICO ---
+float risk_sl_pct   = sl_pct / 100
+float risk_tp_pct   = (sl_pct * 3.0) / 100 
 
-float long_tp1 = strategy.position_avg_price * (1 + tp1_pct_val)
-float long_tp2 = strategy.position_avg_price * (1 + tp2_pct_val)
-float long_sl  = strategy.position_avg_price * (1 - sl_pct_val)
+// Saída técnica restrita apenas quando o ADX estiver na zona vermelha de força de baixa
+bool technical_exit = (ta.crossunder(ema9, ema21) or ta.crossunder(close, pmax) or ta.crossunder(close, emaWaveLow)) and adx_red_zone
+
+if (technical_exit and strategy.position_size > 0)
+    last_signal_price := na
+    strategy.close("Buy Early", comment="Saída Cruzamento/Wave")
+    strategy.close("Buy", comment="Saída Rompimento/Wave")
 
 if (strategy.position_size > 0)
-    strategy.exit("TP1 Parcial", "Buy", qty_percent=tp1_qty, limit=long_tp1, comment="TP1 50%")
-    strategy.exit("TP2 & SL", "Buy", limit=long_tp2, stop=long_sl, comment="TP2 / SL")
-    strategy.exit("TP1 Parcial Early", "Buy Early", qty_percent=tp1_qty, limit=long_tp1, comment="TP1 50%")
-    strategy.exit("TP2 & SL Early", "Buy Early", limit=long_tp2, stop=long_sl, comment="TP2 / SL")
+    float current_entry_price = strategy.opentrades.entry_price(0)
+    
+    float target_price = current_entry_price * (1 + risk_tp_pct)
+    float stop_price   = use_trail ? math.max(current_entry_price * (1 - risk_sl_pct), pmax) : current_entry_price * (1 - risk_sl_pct)
 
-// --- PLOTS VISUAIS DE CONSOLIDAÇÃO ---
-bgcolor(is_consolidated ? color.new(color.orange, 98) : na, title="Fundo de Consolidação")
+    strategy.exit("SL/TP Early", "Buy Early", limit=target_price, stop=stop_price, comment_loss="SL Trail/Fixed", comment_profit="TP 1:3")
+    strategy.exit("SL/TP Rompimento", "Buy", limit=target_price, stop=stop_price, comment_loss="SL Trail/Fixed", comment_profit="TP 1:3")
+
+// --- PLOTS VISUAIS DE CONSOLIDAÇÃO E ADX ---
+bgcolor(is_consolidated ? color.new(#c4eb38, 98) : na, title="Fundo de Consolidação")
 plotshape(ta.change(is_consolidated) and is_consolidated, title="Início Consolidação", text="LATERAL", location=location.top, style=shape.flag, size=size.small, color=color.orange, textcolor=color.white)
 
-// --- PLOTS DE GERENCIAMENTO DE RISCO ---
-float plot_sl_line = strategy.position_size > 0 ? long_sl : na
-plot(plot_sl_line, color=color.red, title="Stop Loss Line", style=plot.style_linebr, linewidth=2)
+bgcolor(use_adx_filter and adx > adx_threshold and p_di > m_di ? color.new(color.green, 95) : na, title="Fundo Tendência de Alta ADX")
+bgcolor(use_adx_filter and adx > adx_threshold and m_di > p_di ? color.new(color.red, 95) : na, title="Fundo Tendência de Baixa ADX")
 
-// --- PLOTS ---
+// --- PLOTS EMA WAVE (34) ---
+plotHigh  = plot(use_ema_wave ? emaWaveHigh : na, color=color.new(color.green, 30), linewidth=1, title="EMA Wave High (34)")
+plotClose = plot(use_ema_wave ? emaWaveClose : na, color=color.new(color.gray, 50), linewidth=1, title="EMA Wave Close (34)")
+plotLow   = plot(use_ema_wave ? emaWaveLow : na, color=color.new(color.red, 30), linewidth=1, title="EMA Wave Low (34)")
+fill(plotHigh, plotLow, color=use_ema_wave ? color.new(color.blue, 92) : na, title="EMA Wave Fill")
+
+// --- PLOTS GERAIS ---
 plot(show_pmax ? mavg : na, color=color.new(#0585E1, 0), linewidth=2, title="Moving Avg Line")
 plot(pmax, color=pmax_dir == 1 ? #00d9ff : #ff00f2, linewidth=2, title="PMax Stop Line")
 plot(ema9, color=color.yellow, title="EMA 9", linewidth=2)
@@ -216,7 +227,6 @@ color hlt_color = hlt_srcc >= hlt ? color_up : color_dn
 p1 = plot(use_hlt ? hlt : na, color=hlt_color, style=plot.style_cross)
 p2 = plot(use_hlt ? hlt_srcc : na, display=display.none)
 fill(p1, p2, color=use_hlt ? color.new(hlt_color, 80) : na)
-barcolor(use_hlt and bar_color ? hlt_color : na)
 
 bool enable_macd200   = input.bool(true, title="Ativar Bloco MACD 200", group="MACD 200")
 source                = input.source(close, title="Source MACD 200", group="MACD 200")
@@ -242,7 +252,6 @@ bartrendcolor = close > fastMA and close > slowMA and close > veryslowMA and ta.
 backgroundcolor = slowMA > veryslowMA and ta.crossover(histt, 0) and macdd > 0 and fastMA > slowMA and close[slowLength] > veryslowMA ? #32fd32 : slowMA < veryslowMA and ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA ? color.red : na
 
 bgcolor(enable_macd200 and switch3 ? backgroundcolor : na, color = color.new(backgroundcolor, 80))
-barcolor(enable_macd200 and switch1 ? bartrendcolor : na)
 
 F = plot(enable_macd200 and switch2 ? fastMA : na, color=trendcolor)
 S = plot(enable_macd200 and switch2 ? slowMA : na, color=trendcolor, linewidth=2)
@@ -266,60 +275,14 @@ if (enable_macd200)
 
 bool condAltaEma80 = (ema80 < close) 
 bool condBaixaEma80 = (ema80 > close) 
-color corEma80 = condAltaEma80 ? color.new(#32fd32, 0) : condBaixaEma80 ? color.red : color.gray
+color corEma80 = condAltaEma80 ? color.new(#32fd32, 0) : condBaixaEma80 ? color.red : color.rgb(214, 240, 71)
 plot(ema80, title="EMA 80 Colorida", color=corEma80, linewidth=3)
 
 float maxIdLossPcnt = input.float(50, title="Max Intraday Loss (%)", group="Gestão de Risco")
 strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
 
-// --- INPUTS: FILTRO ADX (DIRECIONAL) ---
-bool use_adx_filter   = input.bool(true, title="Ligar / Desligar Filtro ADX", group="Filtro ADX")
-int adx_len           = input.int(14, title="ADX Smoothing Length", group="Filtro ADX")
-int adx_threshold     = input.int(20, title="ADX Tendência Mínima (Forte se > 20)", group="Filtro ADX")
-
-// --- CALCULATIONS: ADX & DIRECIONAL ---
-int di_len = adx_len
-// Cálculo das linhas DI+ e DI- e do ADX
-[_, _, adx_val] = ta.dmi(di_len, adx_len)
-
-// Identificação de Direção baseada no DMI (+DI e -DI)
-float plus_di  = ta.rma(math.max(high - high[1], 0), di_len)
-float minus_di = ta.rma(math.max(low[1] - low, 0), di_len)
-// Nota: o Pine Script possui a função ta.dmi que retorna (plusDI, minusDI, adx)
-[p_di, m_di, adx] = ta.dmi(di_len, adx_len)
-
-bool adx_trend_strong = not use_adx_filter or (adx > adx_threshold)
-bool adx_bullish      = not use_adx_filter or (p_di > m_di)
-bool adx_bearish      = not use_adx_filter or (m_di > p_di)
-
-// --- PLOT VISUAL ADX (Opcional para ver o fundo pintado conforme a direção forte) ---
-bgcolor(use_adx_filter and adx > adx_threshold and p_di > m_di ? color.new(color.green, 95) : na, title="Fundo Tendência de Alta ADX")
-bgcolor(use_adx_filter and adx > adx_threshold and m_di > p_di ? color.new(color.red, 95) : na, title="Fundo Tendência de Baixa ADX")
-
-// --- GESTÃO DE RISCO 1:3 & SAÍDA TÉCNICA POR CRUZAMENTO ---
-
-// Inputs para a relação 1:3 baseada na porcentagem do Stop Loss existente
-float risk_sl_pct   = sl_pct / 100
-float risk_tp_pct   = (sl_pct * 3.0) / 100 // Alvo automático de 3x o Stop Loss
-
-// Condição de saída técnica por cruzamento de médias (Cruzou para baixo)
-bool technical_exit = ta.crossunder(ema9, ema21) or ta.crossunder(close, pmax)
-
-// Executa a saída técnica se houver posição aberta
-if (technical_exit and strategy.position_size > 0)
-    last_signal_price := na
-    strategy.close("Buy Early", comment="Saída Cruzamento Média")
-    strategy.close("Buy", comment="Saída Rompimento Cruzamento")
-
-// Aplica as ordens de Stop Loss e Take Profit (1:3) para as entradas ativas
-if (strategy.position_size > 0)
-    // Pega o preço médio da operação atual para calcular os limites exatos
-    float current_entry_price = strategy.opentrades.entry_price(0)
-    
-    float target_price = current_entry_price * (1 + risk_tp_pct)
-    float stop_price   = current_entry_price * (1 - risk_sl_pct)
-
-    // Alvo e Stop para a Compra Antecipada (BE)
+// --- BARCOLOR FINAL ---
+barcolor(use_ema_wave ? wave_bar_color : (use_hlt and bar_color ? hlt_color : (enable_macd200 and switch1 ? bartrendcolor : na)))
     strategy.exit("SL/TP Early", "Buy Early", limit=target_price, stop=stop_price, comment_loss="SL 1:3", comment_profit="TP 1:3")
     
     // Alvo e Stop para a Compra de Rompimento (B)
