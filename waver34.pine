@@ -1,0 +1,26 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=5
+indicator("EMA Wave (34) - Canal e Coloração", overlay=true)
+
+// --- INPUTS ---
+int periodo      = input.int(34, title="Período da Wave")
+bool mostrarWave = input.bool(true, title="Mostrar Linhas e Canal da Wave")
+bool pintarVelasp = input.bool(true, title="Pintar Barras (Verde/Vermelho/Azul)")
+
+// --- CÁLCULOS ---
+float emaAlta   = ta.ema(high, periodo)
+float emaFech   = ta.ema(close, periodo)
+float emaBaixa  = ta.ema(low, periodo)
+
+// --- LÓGICA DE CORES DAS BARRAS ---
+color corBarra = close > emaAlta ? color.green : close < emaBaixa ? color.red : color.blue
+
+// --- PLOTS DAS LINHAS E PREENCHIMENTO ---
+p_high  = plot(mostrarWave ? emaAlta : na, color=color.new(color.green, 30), linewidth=1, title="EMA Alta (High)")
+p_close = plot(mostrarWave ? emaFech : na, color=color.new(color.gray, 50), linewidth=1, title="EMA Fechamento (Close)")
+p_low   = plot(mostrarWave ? emaBaixa : na, color=color.new(color.red, 30), linewidth=1, title="EMA Baixa (Low)")
+
+fill(p_high, p_low, color=mostrarWave ? color.new(color.blue, 92) : na, title="Preenchimento do Canal Wave")
+
+// --- COLORIR BARRAS ---
+barcolor(pintarVelasp ? corBarra : na)
