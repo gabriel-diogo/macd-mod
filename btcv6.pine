@@ -1,0 +1,455 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+//@version=6
+
+strategy('PMax + MACD + RSI + MAs + S&R + HTF Seguro', shorttitle = 'PMax_Stable', overlay = true, initial_capital = 10000, default_qty_type = strategy.percent_of_equity, default_qty_value = 100)
+
+// --- INPUTS: PMAX & ATR ---
+
+int periods = input.int(10, title = 'ATR Length', group = 'PMax Settings')
+
+float multiplier = input.float(1.5, title = 'ATR Multiplier', step = 0.1, group = 'PMax Settings')
+
+int ma_length = input.int(12, title = 'Moving Average Length', minval = 1, group = 'PMax Settings')
+
+bool show_pmax = input.bool(true, title = 'Show PMax Line', group = 'PMax Settings')
+
+// --- INPUTS: MACD ---
+
+int fast_length = input.int(12, title = 'MACD Fast Length', group = 'MACD Settings')
+
+int slow_length = input.int(26, title = 'MACD Slow Length', group = 'MACD Settings')
+
+int signal_length = input.int(9, title = 'MACD Signal Smoothing', group = 'MACD Settings')
+
+// --- INPUTS: RSI FILTER ---
+
+bool use_rsi_filter = input.bool(true, title = 'Usar Filtro RSI', group = 'RSI Filter')
+
+int rsi_length = input.int(14, title = 'RSI Length', group = 'RSI Filter')
+
+int rsi_oversold = input.int(40, title = 'RSI Min Level', group = 'RSI Filter')
+
+int rsi_overbought = input.int(75, title = 'RSI Max Level', group = 'RSI Filter')
+
+// --- INPUTS: TREND MAs & TRIGGERS ---
+
+bool use_ma_filter = input.bool(true, title = 'Use MAs Filter (9, 21, 50, 80)', group = 'Trend & Volume Filter')
+
+bool use_ema_cross = input.bool(true, title = 'Use EMA 9/21 Crossover Trigger (Buy)', group = 'Trend & Volume Filter')
+
+bool use_ema_cross_down = input.bool(true, title = 'Use EMA 9/21 Crossunder Trigger (Sell)', group = 'Trend & Volume Filter')
+
+bool use_vol_filter = input.bool(true, title = 'Use Volume Filter', group = 'Trend & Volume Filter')
+
+int vol_len = input.int(20, title = 'Volume SMA Length', minval = 1, group = 'Trend & Volume Filter')
+
+// --- INPUTS: SEÇÃO EXCLUSIVA DO FILTRO MULTI-TIMEFRAME ---
+
+bool use_htf_filter = input.bool(true, title = 'Ligar / Desligar Filtro HTF', group = 'HTF (Filtro de Tempo Maior)')
+
+string htf_resolution = input.timeframe('D', title = 'Resolução do Filtro (D = Diário, 240 = 4h)', group = 'HTF (Filtro de Tempo Maior)')
+
+// --- INPUTS: FILTRO DE SUPORTE E RESISTÊNCIA (ANTI-LATERALIZAÇÃO) ---
+
+bool use_sr_filter = input.bool(true, title = 'Usar Filtro de Rompimento de Resistência (S&R)', group = 'Filtro Suporte & Resistência')
+
+int sr_len = input.int(20, title = 'Período de S&R (Topos/Fundos Anteriores)', minval = 1, group = 'Filtro Suporte & Resistência')
+
+bool use_lat_filter = input.bool(true, title = 'Usar Filtro de Distância (Anti-Repetição)', group = 'Filtro Suporte & Resistência')
+
+float min_distance_pct = input.float(0.6, title = 'Distância Mínima % do Último Sinal', step = 0.1, group = 'Filtro Suporte & Resistência') / 100
+
+// --- INPUTS: FILTRO DE CONSOLIDAÇÃO (CRUZAMENTOS DA EMA 9/21) ---
+
+bool use_consolidation_filter = input.bool(true, title = 'Ativar Filtro de Consolidação (Cruzamentos)', group = 'Filtro de Consolidação')
+
+int consolidation_lookback = input.int(20, title = 'Janela de Barras para Cruzamentos', minval = 1, group = 'Filtro de Consolidação')
+
+int max_allowed_crosses = input.int(3, title = 'Máximo de Cruzamentos Permitidos', minval = 1, group = 'Filtro de Consolidação')
+
+// --- INPUTS: RISK MANAGEMENT & TRAILING STOP ---
+
+float sl_pct = input.float(1.5, title = 'Stop Loss Inicial (%)', step = 0.1, group = 'Gestão de Risco')
+
+bool use_trail = input.bool(true, title = 'Ativar Trailing Stop Dinâmico (PMax)', group = 'Gestão de Risco')
+
+// --- INPUTS: EMA WAVE (34) ---
+
+bool use_ema_wave = input.bool(true, title = 'Ativar EMA Wave (34) Plots e Cores', group = 'EMA Wave 34')
+
+int wave_period = input.int(34, title = 'Período EMA Wave', group = 'EMA Wave 34')
+
+// --- INPUTS: FILTRO ADX (DIRECIONAL) ---
+
+bool use_adx_filter = input.bool(true, title = 'Ligar / Desligar Filtro ADX', group = 'Filtro ADX')
+
+int adx_len = input.int(14, title = 'ADX Smoothing Length', group = 'Filtro ADX')
+
+int adx_threshold = input.int(20, title = 'ADX Tendência Mínima (Forte se > 20)', group = 'Filtro ADX')
+
+// --- CALCULATIONS: ATR & PMAX ---
+
+float src = (high + low) / 2
+
+float atr_val = ta.atr(periods)
+
+float mavg = ta.ema(src, ma_length)
+
+float long_stop = mavg - multiplier * atr_val
+
+float long_stop_prev = nz(long_stop[1], long_stop)
+
+long_stop := mavg > long_stop_prev ? math.max(long_stop, long_stop_prev) : long_stop
+
+float short_stop = mavg + multiplier * atr_val
+
+float short_stop_prev = nz(short_stop[1], short_stop)
+
+short_stop := mavg < short_stop_prev ? math.min(short_stop, short_stop_prev) : short_stop
+
+var int pmax_dir = 1
+
+pmax_dir := nz(pmax_dir[1], 1)
+
+pmax_dir := pmax_dir == -1 and mavg > short_stop_prev ? 1 : pmax_dir == 1 and mavg < long_stop_prev ? -1 : pmax_dir
+
+float pmax = pmax_dir == 1 ? long_stop : short_stop
+
+// --- CALCULATIONS: MACD ---
+
+float fast_ma = ta.ema(close, fast_length)
+
+float slow_ma = ta.ema(close, slow_length)
+
+float macd = fast_ma - slow_ma
+
+float signal_line = ta.sma(macd, signal_length)
+
+float hist = macd - signal_line
+
+// --- CALCULATIONS: RSI ---
+
+float rsi_val = ta.rsi(close, rsi_length)
+
+// --- CALCULATIONS: MAs (9, 21, 50, 80) & VOLUME ---
+
+float ema9 = ta.ema(close, 9)
+
+float ema21 = ta.ema(close, 21)
+
+float ema50 = ta.ema(close, 50)
+
+float ema80 = ta.ema(close, 80)
+
+float vol_sma = ta.sma(volume, vol_len)
+
+bool volume_ok = not use_vol_filter or volume > vol_sma
+
+bool ma_trend_ok = not use_ma_filter or close > ema50 and ema9 > ema21
+
+// --- CALCULATIONS: EMA WAVE (34) ---
+
+float emaWaveHigh = ta.ema(high, wave_period)
+
+float emaWaveClose = ta.ema(close, wave_period)
+
+float emaWaveLow = ta.ema(low, wave_period)
+
+color wave_bar_color = close > emaWaveHigh ? color.green : close < emaWaveLow ? color.red : color.blue
+
+// --- CALCULATIONS: ADX & DIRECIONAL ---
+
+[p_di, m_di, adx] = ta.dmi(adx_len, adx_len)
+
+bool adx_red_zone = not use_adx_filter or adx > adx_threshold and m_di > p_di
+
+// --- CALCULATIONS: MULTI-TIMEFRAME SEGURO ---
+
+float raw_htf_close = request.security(syminfo.tickerid, htf_resolution, close[1], barmerge.gaps_off, barmerge.lookahead_off)
+
+float raw_htf_ema = request.security(syminfo.tickerid, htf_resolution, ta.ema(close, 50)[1], barmerge.gaps_off, barmerge.lookahead_off)
+
+bool htf_trend_ok = not use_htf_filter or nz(raw_htf_close, close) > nz(raw_htf_ema, close)
+
+// --- CALCULATIONS: SUPORTE E RESISTÊNCIA ---
+
+float resistance = ta.highest(high[1], sr_len)
+
+float support = ta.lowest(low[1], sr_len)
+
+bool sr_ok = not use_sr_filter or close >= resistance or close > support + (resistance - support) * 0.6
+
+// --- CONTROLE DE REPETIÇÃO NA MESMA REGIÃO ---
+
+var float last_signal_price = na
+
+bool price_moved_enough = not use_lat_filter or na(last_signal_price) or last_signal_price != 0 and math.abs(close - last_signal_price) / last_signal_price > min_distance_pct
+
+// --- CALCULATIONS: FILTRO DE CONSOLIDAÇÃO ---
+
+bool ema_crossed_now = ta.crossover(ema9, ema21) or ta.crossunder(ema9, ema21)
+
+var int total_crosses_recent = 0
+
+int cross_value = ema_crossed_now ? 1 : 0
+
+total_crosses_recent := nz(total_crosses_recent[1]) + cross_value - (bar_index >= consolidation_lookback ? nz(cross_value[consolidation_lookback]) : 0)
+
+bool tempo_grafico_maior_que_1d = timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly and timeframe.multiplier > 1
+
+bool is_consolidated = use_consolidation_filter and not tempo_grafico_maior_que_1d and total_crosses_recent >= max_allowed_crosses
+
+bool not_consolidated = not is_consolidated
+
+// --- STRATEGY CONDITIONS ---
+
+bool macd_cond = ta.crossover(macd, signal_line) or hist > 0 and hist > hist[1]
+
+bool price_above_all_mas = close > ema9 and close > ema21 and close > ema50 and close > ema80
+
+bool ema_cross_cond = ta.crossover(ema9, ema21) and price_above_all_mas
+
+bool ema_cross_down_cond = ta.crossunder(ema9, ema21)
+
+bool trigger_buy = macd_cond or use_ema_cross and ema_cross_cond
+
+bool rsi_cond = not use_rsi_filter or rsi_val > rsi_oversold and rsi_val < rsi_overbought
+
+bool buy_early_condition = close > support and close <= pmax and close > ema50 and ma_trend_ok and sr_ok and rsi_cond and not_consolidated and price_moved_enough and htf_trend_ok and volume_ok
+
+bool buy_condition = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and price_moved_enough and not_consolidated and htf_trend_ok
+
+// --- CONDIÇÕES DE SAÍDA / VENDA FILTRADAS PELA ZONA VERMELHA DO ADX ---
+
+bool raw_sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or use_ema_cross_down and ema_cross_down_cond
+
+bool sell_allowed = (not is_consolidated or close < support) and adx_red_zone
+
+bool sell_condition = raw_sell_condition and sell_allowed
+
+// --- EXECUTION ---
+
+if buy_early_condition
+
+    last_signal_price := close
+
+    strategy.entry('Buy Early', strategy.long, comment = 'Buy Antecipado SR')
+
+if buy_condition
+
+    last_signal_price := close
+
+    strategy.entry('Buy', strategy.long, comment = 'Buy Rompimento')
+
+if sell_condition and strategy.position_size > 0
+    last_signal_price := na
+    strategy.close('Buy', comment = 'Saída Tendência')
+    strategy.close('Buy Early', comment = 'Saída Tendência Early')
+    strategy.close('MACDLE', comment = 'Saída Tendência MACD 200')
+
+// --- GESTÃO DE RISCO 1:3 & TRAILING STOP DINÂMICO ---
+
+float risk_sl_pct = sl_pct / 100
+
+float risk_tp_pct = sl_pct * 3.0 / 100
+
+// Saída técnica restrita apenas quando o ADX estiver na zona vermelha de força de baixa
+
+bool technical_exit = (ta.crossunder(ema9, ema21) or ta.crossunder(close, pmax) or ta.crossunder(close, emaWaveLow)) and adx_red_zone
+
+if technical_exit and strategy.position_size > 0
+
+    last_signal_price := na
+
+    strategy.close('Buy Early', comment = 'Saída Cruzamento/Wave')
+
+    strategy.close('Buy', comment = 'Saída Rompimento/Wave')
+    strategy.close('MACDLE', comment = 'Saída Técnica MACD 200')
+
+if strategy.position_size > 0
+
+    float current_entry_price = strategy.opentrades.entry_price(0)
+
+    float target_price = current_entry_price * (1 + risk_tp_pct)
+
+    float stop_price = use_trail ? math.max(current_entry_price * (1 - risk_sl_pct), pmax) : current_entry_price * (1 - risk_sl_pct)
+
+    strategy.exit('SL/TP Early', 'Buy Early', limit = target_price, stop = stop_price, comment_loss = 'SL Trail/Fixed', comment_profit = 'TP 1:3')
+
+    strategy.exit('SL/TP Rompimento', 'Buy', limit = target_price, stop = stop_price, comment_loss = 'SL Trail/Fixed', comment_profit = 'TP 1:3')
+    strategy.exit('SL/TP MACDLE', 'MACDLE', limit = target_price, stop = stop_price, comment_loss = 'SL Trail/Fixed', comment_profit = 'TP 1:3')
+
+if strategy.position_size < 0
+    float short_entry_price = strategy.position_avg_price
+    float short_target_price = short_entry_price * (1 - risk_tp_pct)
+    float short_stop_price = short_entry_price * (1 + risk_sl_pct)
+    strategy.exit('SL/TP MACDSE', 'MACDSE', limit = short_target_price, stop = short_stop_price, comment_loss = 'SL Fixo', comment_profit = 'TP 1:3')
+
+// --- PLOTS VISUAIS DE CONSOLIDAÇÃO E ADX ---
+
+bgcolor(is_consolidated ? color.new(#c4eb38, 98) : na, title = 'Fundo de Consolidação')
+
+plotshape(ta.change(is_consolidated) and is_consolidated, title = 'Início Consolidação', text = 'LATERAL', location = location.top, style = shape.flag, size = size.small, color = color.orange, textcolor = color.white)
+
+bgcolor(use_adx_filter and adx > adx_threshold and p_di > m_di ? color.new(color.green, 95) : na, title = 'Fundo Tendência de Alta ADX')
+
+bgcolor(use_adx_filter and adx > adx_threshold and m_di > p_di ? color.new(color.red, 95) : na, title = 'Fundo Tendência de Baixa ADX')
+
+// --- PLOTS EMA WAVE (34) ---
+
+plotHigh = plot(use_ema_wave ? emaWaveHigh : na, color = color.new(color.green, 30), linewidth = 1, title = 'EMA Wave High (34)')
+
+plotClose = plot(use_ema_wave ? emaWaveClose : na, color = color.new(color.gray, 50), linewidth = 1, title = 'EMA Wave Close (34)')
+
+plotLow = plot(use_ema_wave ? emaWaveLow : na, color = color.new(color.red, 30), linewidth = 1, title = 'EMA Wave Low (34)')
+
+fill(plotHigh, plotLow, color = use_ema_wave ? color.new(color.blue, 92) : na, title = 'EMA Wave Fill')
+
+// --- PLOTS GERAIS ---
+
+plot(show_pmax ? mavg : na, color = color.new(#0585E1, 0), linewidth = 2, title = 'Moving Avg Line')
+
+plot(pmax, color = pmax_dir == 1 ? #00d9ff : #ff00f2, linewidth = 2, title = 'PMax Stop Line')
+
+plot(ema9, color = color.yellow, title = 'EMA 9', linewidth = 2)
+
+plot(ema21, color = color.orange, title = 'EMA 21', linewidth = 2)
+
+plot(ema50, color = color.red, title = 'EMA 50', linewidth = 1)
+
+plot(use_sr_filter ? resistance : na, color = color.new(color.red, 50), title = 'Resistência S&R', style = plot.style_linebr)
+
+plot(use_sr_filter ? support : na, color = color.new(color.green, 50), title = 'Suporte S&R', style = plot.style_linebr)
+
+plotshape(buy_early_condition, title = 'Buy Early Signal', text = 'BE', location = location.belowbar, style = shape.labelup, size = size.small, color = color.navy, textcolor = color.white)
+
+plotshape(buy_condition, title = 'Buy Signal', text = 'B', location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
+
+plotshape(sell_condition, title = 'Sell Signal', text = 'S', location = location.abovebar, style = shape.labeldown, size = size.small, color = color.red, textcolor = color.white)
+
+// --- OUTROS MÓDULOS (HLT / MACD 200 / EMA 80) ---
+
+bool use_hlt = input.bool(true, title = 'Ativar Indicador HLT', group = 'HLT Settings')
+
+int hlt_length = input.int(23, group = 'HLT Settings')
+
+int hlt_offset = input.int(4, group = 'HLT Settings')
+
+float hlt_srcc = input.source(close, title = 'HLT Source', group = 'HLT Settings')
+
+bool use_high_low = input.bool(false, title = 'Use High and Low', group = 'HLT Settings')
+
+bool bar_color = input.bool(false, title = 'Bar Color', group = 'HLT Visual')
+
+color color_up = input.color(color.blue, title = 'Color Up', group = 'HLT Visual')
+
+color color_dn = input.color(color.red, title = 'Color Down', group = 'HLT Visual')
+
+var float hlt = 0.0
+
+float upper = ta.highest(use_high_low ? high : hlt_srcc, hlt_length)[hlt_offset]
+
+float lower = ta.lowest(use_high_low ? low : hlt_srcc, hlt_length)[hlt_offset]
+
+hlt := hlt_srcc > upper ? lower : hlt_srcc < lower ? upper : nz(hlt)
+
+color hlt_color = hlt_srcc >= hlt ? color_up : color_dn
+
+p1 = plot(use_hlt ? hlt : na, color = hlt_color, style = plot.style_cross)
+
+p2 = plot(use_hlt ? hlt_srcc : na, display = display.none)
+
+fill(p1, p2, color = use_hlt ? color.new(hlt_color, 80) : na)
+
+bool enable_macd200 = input.bool(true, title = 'Ativar Bloco MACD 200', group = 'MACD 200')
+
+source = input.source(close, title = 'Source MACD 200', group = 'MACD 200')
+
+fastLength = input.int(12, minval = 1, title = 'MACD fast moving average', group = 'MACD 200')
+
+slowLength = input.int(26, minval = 1, title = 'MACD slow moving average', group = 'MACD 200')
+
+signalLength = input.int(9, minval = 1, title = 'MACD signal line moving average', group = 'MACD 200')
+
+veryslowLength = input.int(200, minval = 1, title = 'Very slow moving average', group = 'MACD 200')
+
+switch1 = input.bool(true, title = 'Enable Bar Color?', group = 'MACD 200')
+
+switch2 = input.bool(true, title = 'Enable Moving Averages?', group = 'MACD 200')
+
+switch3 = input.bool(true, title = 'Enable Background Color?', group = 'MACD 200')
+
+switch_veryslow = input.bool(true, title = 'Enable MACD 200 (Very Slow MA & Fill)?', group = 'MACD 200')
+
+fastMA = ta.sma(source, fastLength)
+
+slowMA = ta.sma(source, slowLength)
+
+veryslowMA = ta.sma(source, veryslowLength)
+
+macdd = fastMA - slowMA
+
+signal = ta.sma(macdd, signalLength)
+
+histt = macdd - signal
+
+MAtrendcolor = ta.change(veryslowMA) > 0 ? #7ef131 : #e92063
+
+trendcolor = fastMA > slowMA and ta.change(veryslowMA) > 0 and close > slowMA ? #49fd49 : fastMA < slowMA and ta.change(veryslowMA) < 0 and close < slowMA ? color.red : color.blue
+
+bartrendcolor = close > fastMA and close > slowMA and close > veryslowMA and ta.change(slowMA) > 0 ? color.green : close < fastMA and close < slowMA and close < veryslowMA and ta.change(slowMA) < 0 ? color.red : color.blue
+
+backgroundcolor = slowMA > veryslowMA and ta.crossover(histt, 0) and macdd > 0 and fastMA > slowMA and close[slowLength] > veryslowMA ? #32fd32 : slowMA < veryslowMA and ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA ? color.red : na
+
+bgcolor(enable_macd200 and switch3 ? backgroundcolor : na)
+
+F = plot(enable_macd200 and switch2 ? fastMA : na, color = trendcolor)
+
+S = plot(enable_macd200 and switch2 ? slowMA : na, color = trendcolor, linewidth = 2)
+
+V = plot(enable_macd200 and switch_veryslow and switch2 ? veryslowMA : na, color = MAtrendcolor, linewidth = 4)
+
+fill(F, V, color = enable_macd200 and switch_veryslow ? color.new(color.blue, 95) : na)
+
+buyprice = low
+
+sellprice = high
+
+cancelLong = slowMA < veryslowMA
+
+cancelShort = slowMA > veryslowMA
+
+if enable_macd200
+
+    if cancelLong
+
+        strategy.cancel('MACDLE')
+
+    if ta.crossover(histt, 0) and macdd > 0 and fastMA > slowMA and close[slowLength] > veryslowMA
+
+        strategy.entry('MACDLE', strategy.long, stop = buyprice, comment = 'Bullish')
+
+    if cancelShort
+
+        strategy.cancel('MACDSE')
+
+    if ta.crossunder(histt, 0) and macdd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA
+
+        strategy.entry('MACDSE', strategy.short, stop = sellprice, comment = 'Bearish')
+
+bool condAltaEma80 = ema80 < close
+
+bool condBaixaEma80 = ema80 > close
+
+color corEma80 = condAltaEma80 ? color.new(#32fd32, 0) : condBaixaEma80 ? color.red : color.rgb(214, 240, 71)
+
+plot(ema80, title = 'EMA 80 Colorida', color = corEma80, linewidth = 3)
+
+float maxIdLossPcnt = input.float(5, title = 'Max Intraday Loss (%)', minval = 0.1, maxval = 100, step = 0.5, group = 'Gestão de Risco')
+
+strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
+
+// --- BARCOLOR FINAL ---
+
+barcolor(use_ema_wave ? wave_bar_color : use_hlt and bar_color ? hlt_color : enable_macd200 and switch1 ? bartrendcolor : na)
