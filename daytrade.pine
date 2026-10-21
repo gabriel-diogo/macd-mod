@@ -1,116 +1,193 @@
+
+ // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=5
-strategy("Forex Day Trade - Wave Pullback + MTF + Filtro Lateral Ativo", shorttitle="Forex_Strategy_V5", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+strategy("Forex Day Trade - Wave Pullback + MTF + Filtro Lateral Ativo",
+     shorttitle="Forex_Strategy_V5",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     pyramiding=0,
+     process_orders_on_close=true)
 
-// --- INPUTS: SESSÃO DE NEGOCIAÇÃO ---
-bool use_time_filter = input.bool(true, title="Filtrar por Horário (Londres/NY)", group="Horário de Operação")
-string sessao        = input.session("0800-1700", title="Janela Operacional", group="Horário de Operação")
+// =====================================================
+// 1. HORÁRIO DE OPERAÇÃO
+// =====================================================
+bool use_time_filter = input.bool(true, "Filtrar por horário", group="Horário de Operação")
+string sessao = input.session("0800-1700", "Janela operacional", group="Horário de Operação")
 
-// --- INPUTS: TENDÊNCIA E MÉDIAS ---
-int wave_len         = input.int(34, title="Período EMA Wave", group="Parâmetros de Tendência")
-int ema80_len        = input.int(80, title="EMA Intermediária (80)", group="Parâmetros de Tendência")
-int ema_macro_len    = input.int(200, title="EMA Macro (200)", group="Parâmetros de Tendência")
+bool in_session = not use_time_filter or not na(time(timeframe.period, sessao))
 
-// --- INPUTS: FILTRO MULTI-TIMEFRAME (MTF) ---
-bool use_htf_filter  = input.bool(true, title="Ativar Filtro de Tempo Gráfico Maior", group="Filtro Macro (MTF)")
-string htf_tf        = input.string("240", title="Tempo Gráfico Maior", group="Filtro Macro (MTF)")
-int htf_ema_len      = input.int(200, title="Período da EMA no Tempo Maior", group="Filtro Macro (MTF)")
+// =====================================================
+// 2. TENDÊNCIA E MÉDIAS
+// =====================================================
+int wave_len = input.int(34, "Período EMA Wave", minval=1, group="Parâmetros de Tendência")
+int ema80_len = input.int(80, "EMA intermediária", minval=1, group="Parâmetros de Tendência")
+int ema_macro_len = input.int(200, "EMA macro", minval=1, group="Parâmetros de Tendência")
 
-// --- INPUTS: FILTRO DE CONSOLIDAÇÃO ---
-bool use_consolidation_filter = input.bool(true, title="Ativar Filtro de Consolidação", group="Filtro de Lateralização")
-int max_allowed_crosses       = input.int(3, title="Máximo de Cruzamentos Permitidos (9/21)", group="Filtro de Lateralização")
+float emaWaveHigh = ta.ema(high, wave_len)
+float emaWaveClose = ta.ema(close, wave_len)
+float emaWaveLow = ta.ema(low, wave_len)
 
-// --- INPUTS: GESTÃO DE RISCO ---
-int atr_len          = input.int(14, title="Período ATR", group="Gestão de Risco")
-float atr_mult_sl    = input.float(1.5, title="Multiplicador ATR para Stop", step=0.1, group="Gestão de Risco")
-float risk_reward    = input.float(2.0, title="Risco/Retorno", step=0.1, group="Gestão de Risco")
+float ema80 = ta.ema(close, ema80_len)
+float ema200 = ta.ema(close, ema_macro_len)
 
-// --- CÁLCULOS TÉCNICOS ---
-float emaWaveHigh    = ta.ema(high, wave_len)
-float emaWaveClose   = ta.ema(close, wave_len)
-float emaWaveLow     = ta.ema(low, wave_len)
-float ema80          = ta.ema(close, ema80_len)
-float ema200         = ta.ema(close, ema_macro_len)
-float atr            = ta.atr(atr_len)
+float ema9 = ta.ema(close, 9)
+float ema21 = ta.ema(close, 21)
 
-// --- MTF SEGURO SEM REPAINT ---
-float htf_ema        = request.security(syminfo.tickerid, htf_tf, ta.ema(close, htf_ema_len), barmerge.gaps_off, barmerge.lookahead_off)
-bool htf_bullish     = htf_ema > htf_ema[1] 
-bool htf_bearish     = htf_ema < htf_ema[1] 
+bool trend_bullish = ema80 > ema200
+bool trend_bearish = ema80 < ema200
 
-bool mtf_buy_allowed  = not use_htf_filter or htf_bullish
+// =====================================================
+// 3. FILTRO MTF SEM USAR CANDLE MAIOR ABERTO
+// =====================================================
+bool use_htf_filter = input.bool(true, "Ativar filtro MTF", group="Filtro Macro (MTF)")
+string htf_tf = input.timeframe("240", "Timeframe maior", group="Filtro Macro (MTF)")
+int htf_ema_len = input.int(200, "Período EMA MTF", minval=1, group="Filtro Macro (MTF)")
+
+// Utiliza valores de candles já confirmados do timeframe maior.
+[htf_ema, htf_ema_prev] = request.security(
+     syminfo.tickerid,
+     htf_tf,
+     [ta.ema(close, htf_ema_len)[1], ta.ema(close, htf_ema_len)[2]],
+     gaps=barmerge.gaps_off,
+     lookahead=barmerge.lookahead_on)
+
+bool htf_bullish = htf_ema > htf_ema_prev
+bool htf_bearish = htf_ema < htf_ema_prev
+
+bool mtf_buy_allowed = not use_htf_filter or htf_bullish
 bool mtf_sell_allowed = not use_htf_filter or htf_bearish
 
-// --- FILTRO DE HORÁRIO ---
-bool in_session      = not use_time_filter or not na(time(timeframe.period, sessao))
+// =====================================================
+// 4. FILTRO DE LATERALIZAÇÃO
+// =====================================================
+bool use_consolidation_filter = input.bool(true, "Ativar filtro de lateralização", group="Filtro de Lateralização")
+int consolidation_lookback = input.int(20, "Barras para analisar", minval=1, group="Filtro de Lateralização")
+int max_allowed_crosses = input.int(3, "Limite de cruzamentos", minval=1, group="Filtro de Lateralização")
 
-// --- CONDIÇÕES DE TENDÊNCIA E MÉDIAS ---
-bool trend_bullish   = ema80 > ema200
-bool trend_bearish   = ema80 < ema200
+bool ema_crossed_now = ta.cross(ema9, ema21)
 
-// --- FILTRO DE CONSOLIDAÇÃO ATIVO (Conta cruzamentos 9/21 nas últimas 20 barras) ---
-float ema9           = ta.ema(close, 9)
-float ema21          = ta.ema(close, 21)
-bool ema_crossed_now = ta.crossover(ema9, ema21) or ta.crossunder(ema9, ema21)
+// Conta os cruzamentos efetivos na janela, em vez de usar
+// uma média arredondada dos eventos.
+float crosses_sum = math.sum(ema_crossed_now ? 1.0 : 0.0, consolidation_lookback)
 
-float crosses_sum    = ta.sma(ema_crossed_now ? 1.0 : 0.0, 20) * 20
-bool is_consolidated = use_consolidation_filter and (crosses_sum >= float(max_allowed_crosses))
+bool enough_cross_data = bar_index >= consolidation_lookback
+bool is_consolidated = use_consolidation_filter and enough_cross_data and crosses_sum >= max_allowed_crosses
 bool not_consolidated = not is_consolidated
 
-// --- GATILHOS DE PULLBACK E RETOMADA ---
-bool price_inside_wave = close >= emaWaveLow and close <= emaWaveHigh 
+// =====================================================
+// 5. ATR E GESTÃO DE RISCO
+// =====================================================
+int atr_len = input.int(14, "Período ATR", minval=1, group="Gestão de Risco")
+float atr_mult_sl = input.float(1.5, "Multiplicador ATR do Stop", minval=0.1, step=0.1, group="Gestão de Risco")
+float risk_reward = input.float(2.0, "Risco/Retorno", minval=0.1, step=0.1, group="Gestão de Risco")
+float max_daily_loss_pct = input.float(5.0, "Limite de perda diária (% do patrimônio)", minval=0.1, maxval=100.0, step=0.1, group="Gestão de Risco")
 
-bool buy_trigger  = trend_bullish and ta.crossover(close, emaWaveHigh) and in_session and not_consolidated and mtf_buy_allowed
-bool sell_trigger = trend_bearish and ta.crossunder(close, emaWaveLow) and in_session  and mtf_sell_allowed
+float atr = ta.atr(atr_len)
 
-// --- VARIÁVEIS DE GESTÃO DE POSIÇÃO ---
-var float entry_price = na
-var float sl_price    = na
-var float tp_price    = na
+// Limite de perda intradiária da estratégia.
+// É um limite da estratégia, não um stop por operação.
+strategy.risk.max_intraday_loss(max_daily_loss_pct, strategy.percent_of_equity)
 
-// --- EXECUÇÃO DE COMPRA (LONG) ---
-if (buy_trigger and strategy.position_size == 0)
-    entry_price := close
+// =====================================================
+// 6. VALIDAÇÃO DOS INDICADORES
+// =====================================================
+bool indicators_ready = not na(emaWaveHigh) and not na(emaWaveLow) and not na(emaWaveClose) and not na(ema80) and not na(ema200) and not na(atr) and atr > 0
+
+bool htf_ready = not use_htf_filter or (not na(htf_ema) and not na(htf_ema_prev))
+
+bool can_trade = indicators_ready and htf_ready and not is_consolidated and in_session
+
+// =====================================================
+// 7. SINAIS DE ENTRADA
+// =====================================================
+bool buy_trigger = can_trade and trend_bullish and mtf_buy_allowed and ta.crossover(close, emaWaveHigh)
+bool sell_trigger = can_trade and trend_bearish and mtf_sell_allowed and ta.crossunder(close, emaWaveLow)
+
+// =====================================================
+// 8. NÍVEIS DE STOP E ALVO
+// =====================================================
+var float sl_price = na
+var float tp_price = na
+
+bool new_long = buy_trigger and strategy.position_size == 0
+bool new_short = sell_trigger and strategy.position_size == 0
+
+// Compra
+if new_long
     float structural_support = math.min(emaWaveLow, ema80)
-    sl_price    := math.min(close - (atr * atr_mult_sl), structural_support - (atr * 0.2))
-    tp_price    := close + ((close - sl_price) * risk_reward)
-    
-    strategy.entry("Long Pullback", strategy.long, comment="Compra Pullback")
-    strategy.exit("Exit Long", "Long Pullback", stop=sl_price, limit=tp_price)
+    float proposed_sl = math.min(close - atr * atr_mult_sl, structural_support - atr * 0.2)
+    float proposed_risk = close - proposed_sl
 
-// --- EXECUÇÃO DE VENDA (SHORT) ---
-if (sell_trigger and strategy.position_size == 0)
-    entry_price := close
+    if proposed_risk > syminfo.mintick
+        sl_price := proposed_sl
+        tp_price := close + proposed_risk * risk_reward
+        strategy.entry("Long Pullback", strategy.long, comment="Compra Pullback")
+        strategy.exit("Exit Long", from_entry="Long Pullback", stop=sl_price, limit=tp_price)
+
+// Venda
+if new_short
     float structural_resistance = math.max(emaWaveHigh, ema80)
-    sl_price    := math.max(close + (atr * atr_mult_sl), structural_resistance + (atr * 0.2))
-    tp_price    := close - ((sl_price - close) * risk_reward)
-    
-    strategy.entry("Short Pullback", strategy.short, comment="Venda Pullback")
-    strategy.exit("Exit Short", "Short Pullback", stop=sl_price, limit=tp_price)
+    float proposed_sl = math.max(close + atr * atr_mult_sl, structural_resistance + atr * 0.2)
+    float proposed_risk = proposed_sl - close
 
-// --- SAÍDA TÉCNICA ---
-if (strategy.position_size > 0 and close < emaWaveClose)
+    if proposed_risk > syminfo.mintick
+        sl_price := proposed_sl
+        tp_price := close - proposed_risk * risk_reward
+        strategy.entry("Short Pullback", strategy.short, comment="Venda Pullback")
+        strategy.exit("Exit Short", from_entry="Short Pullback", stop=sl_price, limit=tp_price)
+
+// Mantém as ordens de proteção ativas durante a posição.
+if strategy.position_size > 0 and not na(sl_price) and not na(tp_price)
+    strategy.exit("Exit Long", from_entry="Long Pullback", stop=sl_price, limit=tp_price)
+
+if strategy.position_size < 0 and not na(sl_price) and not na(tp_price)
+    strategy.exit("Exit Short", from_entry="Short Pullback", stop=sl_price, limit=tp_price)
+
+// =====================================================
+// 9. SAÍDA TÉCNICA PELA EMA WAVE
+// =====================================================
+if strategy.position_size > 0 and close < emaWaveClose
     strategy.close("Long Pullback", comment="Saída Wave Close")
 
-if (strategy.position_size < 0 and close > emaWaveClose)
+if strategy.position_size < 0 and close > emaWaveClose
     strategy.close("Short Pullback", comment="Saída Wave Close")
 
-// --- PLOTS VISUAIS ---
-pHigh  = plot(emaWaveHigh, color=color.new(color.green, 30), linewidth=1, title="Wave High")
+// Limpa os níveis quando a posição estiver encerrada.
+bool position_just_closed = strategy.position_size == 0 and strategy.position_size[1] != 0
+
+if position_just_closed
+    sl_price := na
+    tp_price := na
+
+// =====================================================
+// 10. VISUALIZAÇÃO DO CANAL WAVE
+// =====================================================
+pHigh = plot(emaWaveHigh, color=color.new(color.green, 30), linewidth=1, title="Wave High")
 pClose = plot(emaWaveClose, color=color.new(color.gray, 50), linewidth=1, title="Wave Close")
-pLow   = plot(emaWaveLow, color=color.new(color.red, 30), linewidth=1, title="Wave Low")
+pLow = plot(emaWaveLow, color=color.new(color.red, 30), linewidth=1, title="Wave Low")
+
 fill(pHigh, pLow, color=color.new(color.blue, 92), title="Canal Wave")
 
 plot(ema80, color=color.yellow, linewidth=2, title="EMA 80")
 plot(ema200, color=color.orange, linewidth=2, title="EMA 200")
 
-// Fundo laranja avisa quando o mercado está travado/lateral (médias brigando)
-bgcolor(is_consolidated ? color.new(color.orange, 90) : (price_inside_wave ? color.new(color.gray, 96) : na), title="Fundo Lateral")
+// =====================================================
+// 11. FUNDO E NÍVEIS DE RISCO
+// =====================================================
+bool price_inside_wave = close >= emaWaveLow and close <= emaWaveHigh
+
+bgcolor(is_consolidated ? color.new(color.orange, 85) : price_inside_wave ? color.new(color.gray, 96) : na, title="Fundo Lateral")
 
 plot(strategy.position_size != 0 ? sl_price : na, color=color.red, style=plot.style_linebr, linewidth=2, title="Stop Loss")
 plot(strategy.position_size != 0 ? tp_price : na, color=color.green, style=plot.style_linebr, linewidth=2, title="Take Profit")
 
-plotshape(series=buy_trigger, title="Sinal Compra", text="COMPRA", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
-plotshape(series=sell_trigger, title="Sinal Venda", text="VENDA", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
+// =====================================================
+// 12. MARCADORES DOS SINAIS
+// =====================================================
+plotshape(new_long, title="Sinal Compra", text="COMPRA", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
+plotshape(new_short, title="Sinal Venda", text="VENDA", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
 
-strategy.risk.max_intraday_loss(50, strategy.percent_of_equity)
+// Cor das velas conforme a tendência
 barcolor(trend_bullish ? color.green : trend_bearish ? color.red : color.blue)
