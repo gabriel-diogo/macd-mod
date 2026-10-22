@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=5
-strategy("Forex Day Trade - ADX Dinâmico Multi-Timeframe",
-     shorttitle="Forex_ADX_Dynamic",
+strategy("Forex Day Trade - ADX Dinâmico + Filtro RSI",
+     shorttitle="Forex_ADX_RSI_Dynamic",
      overlay=true,
      initial_capital=10000,
      default_qty_type=strategy.percent_of_equity,
@@ -38,32 +38,44 @@ bool trend_bullish = ema80 > ema200
 bool trend_bearish = ema80 < ema200
 
 // =====================================================
-// 3. DETECÇÃO DINÂMICA DE TIMEFRAMES (CASCATA AUTOMÁTICA)
+// 3. FILTRO RSI
+// =====================================================
+bool use_rsi_filter = input.bool(true, "Ativar Filtro de RSI", group="Filtro RSI")
+int rsi_len         = input.int(14, "Período RSI", minval=1, group="Filtro RSI")
+int rsi_ob          = input.int(70, "Nível Máximo de Sobrecompra (Compra < Nível)", minval=50, maxval=90, group="Filtro RSI")
+int rsi_os          = input.int(30, "Nível Mínimo de Sobrevenda (Venda > Nível)", minval=10, maxval=50, group="Filtro RSI")
+
+float rsi_val       = ta.rsi(close, rsi_len)
+
+// Condição do RSI para autorizar entradas
+bool rsi_buy_ok  = not use_rsi_filter or (rsi_val > 50 and rsi_val < rsi_ob)
+bool rsi_sell_ok = not use_rsi_filter or (rsi_val < 50 and rsi_val > rsi_os)
+
+// =====================================================
+// 4. DETECÇÃO DINÂMICA DE TIMEFRAMES (CASCATA AUTOMÁTICA ADX)
 // =====================================================
 int adx_len = input.int(14, "Período ADX", minval=1, group="Filtro ADX MTF")
 int adx_threshold = input.int(20, "ADX Mínimo", minval=1, group="Filtro ADX MTF")
 
-// Lógica de escolha de Timeframes baseada no gráfico atual:
-string tf_med = "60"  // Padrão 1H
-string tf_mac = "240" // Padrão 4H
+string tf_med = "60"
+string tf_mac = "240"
 
 if timeframe.isseconds or (timeframe.isintraday and timeframe.multiplier <= 3)
-    tf_med := "5"    // 5m
-    tf_mac := "15"   // 15m
+    tf_med := "5"
+    tf_mac := "15"
 else if timeframe.isintraday and timeframe.multiplier <= 5
-    tf_med := "15"   // 15m
-    tf_mac := "60"   // 1H
+    tf_med := "15"
+    tf_mac := "60"
 else if timeframe.isintraday and timeframe.multiplier <= 15
-    tf_med := "60"   // 1H
-    tf_mac := "240"  // 4H
+    tf_med := "60"
+    tf_mac := "240"
 else if timeframe.isintraday and timeframe.multiplier <= 60
-    tf_med := "240"  // 4H
-    tf_mac := "1D"   // 1D
+    tf_med := "240"
+    tf_mac := "1D"
 else
-    tf_med := "240"  // 4H
-    tf_mac := "1D"   // 1D
+    tf_med := "240"
+    tf_mac := "1D"
 
-// Função de cálculo seguro do ADX
 f_adx_status(_tf, _len, _thresh) =>
     [p, m, a] = request.security(syminfo.tickerid, _tf, ta.dmi(_len, _len), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
     bool is_bull = (a[1] >= _thresh) and (p[1] > m[1])
@@ -73,18 +85,16 @@ f_adx_status(_tf, _len, _thresh) =>
 [adx_med_bull, adx_med_bear] = f_adx_status(tf_med, adx_len, adx_threshold)
 [adx_mac_bull, adx_mac_bear] = f_adx_status(tf_mac, adx_len, adx_threshold)
 
-// ADX do Gráfico Atual
 [p_loc, m_loc, a_loc] = ta.dmi(adx_len, adx_len)
 bool adx_loc_bull = (a_loc >= adx_threshold) and (p_loc > m_loc)
 bool adx_loc_bear = (a_loc >= adx_threshold) and (m_loc > p_loc)
 
-// Alinhamento dos 3 Níveis Dinâmicos
 bool adx_all_bull = adx_loc_bull and adx_med_bull and adx_mac_bull
 bool adx_all_bear = adx_loc_bear and adx_med_bear and adx_mac_bear
 bool adx_weak     = a_loc < adx_threshold
 
 // =====================================================
-// 4. FILTRO DE LATERALIZAÇÃO
+// 5. FILTRO DE LATERALIZAÇÃO
 // =====================================================
 bool use_consolidation_filter = input.bool(true, "Ativar filtro de lateralização", group="Filtro de Lateralização")
 int consolidation_lookback = input.int(20, "Barras para analisar", minval=1, group="Filtro de Lateralização")
@@ -98,7 +108,7 @@ bool momentum_breakout = math.abs(ema9 - ema21) > ta.atr(14) * 0.3 and not adx_w
 bool is_consolidated = use_consolidation_filter and enough_cross_data and (crosses_sum >= max_allowed_crosses) and not momentum_breakout
 
 // =====================================================
-// 5. ATR E GESTÃO DE RISCO
+// 6. ATR E GESTÃO DE RISCO
 // =====================================================
 int atr_len = input.int(14, "Período ATR", minval=1, group="Gestão de Risco")
 float atr_mult_sl = input.float(1.5, "Multiplicador ATR do Stop", minval=0.1, step=0.1, group="Gestão de Risco")
@@ -110,7 +120,7 @@ float atr = ta.atr(atr_len)
 strategy.risk.max_intraday_loss(max_daily_loss_pct, strategy.percent_of_equity)
 
 // =====================================================
-// 6. VALIDAÇÃO E CONDIÇÕES DE PREÇO
+// 7. VALIDAÇÃO E CONDIÇÕES DE PREÇO
 // =====================================================
 bool indicators_ready = not na(emaWaveHigh) and not na(emaWaveLow) and not na(ema80) and not na(ema200) and not na(atr) and atr > 0
 
@@ -120,7 +130,7 @@ bool price_above_emas = (close > ema80) and (close > ema200)
 bool price_below_emas = (close < ema80) and (close < ema200)
 
 // =====================================================
-// 7. SINAIS DE ENTRADA (MOMENTUM + PULLBACK)
+// 8. SINAIS DE ENTRADA (MOMENTUM + PULLBACK + RSI)
 // =====================================================
 bool broke_wave_up     = ta.crossover(close, emaWaveHigh)
 bool pullback_wave_u   = (close > emaWaveHigh) and (low <= emaWaveHigh) and (close > open)
@@ -128,7 +138,8 @@ bool strong_impulse_u  = (close > emaWaveHigh) and (close > ema9) and (ema9 > em
 
 bool wave_buy_action   = broke_wave_up or pullback_wave_u or strong_impulse_u
 
-bool buy_trigger  = can_trade and trend_bullish and adx_all_bull and price_above_emas and (close > ema9) and wave_buy_action
+// Compra: Exige também autorização do RSI
+bool buy_trigger  = can_trade and trend_bullish and adx_all_bull and price_above_emas and (close > ema9) and wave_buy_action and rsi_buy_ok
 
 bool broke_wave_down   = ta.crossunder(close, emaWaveLow)
 bool pullback_wave_d   = (close < emaWaveLow) and (high >= emaWaveLow) and (close < open)
@@ -136,10 +147,11 @@ bool strong_impulse_d  = (close < emaWaveLow) and (close < ema9) and (ema9 < ema
 
 bool wave_sell_action  = broke_wave_down or pullback_wave_d or strong_impulse_d
 
-bool sell_trigger = can_trade and trend_bearish and adx_all_bear and price_below_emas and (close < ema9) and wave_sell_action
+// Venda: Exige também autorização do RSI
+bool sell_trigger = can_trade and trend_bearish and adx_all_bear and price_below_emas and (close < ema9) and wave_sell_action and rsi_sell_ok
 
 // =====================================================
-// 8. EXECUÇÃO DE POSIÇÕES
+// 9. EXECUÇÃO DE POSIÇÕES
 // =====================================================
 var float sl_price = na
 var float tp_price = na
@@ -155,7 +167,7 @@ if new_long
     if proposed_risk > syminfo.mintick
         sl_price := proposed_sl
         tp_price := close + proposed_risk * risk_reward
-        strategy.entry("Long Pullback", strategy.long, comment="Compra ADX Dinâmico")
+        strategy.entry("Long Pullback", strategy.long, comment="Compra ADX+RSI")
         strategy.exit("Exit Long", from_entry="Long Pullback", stop=sl_price, limit=tp_price)
 
 if new_short
@@ -166,7 +178,7 @@ if new_short
     if proposed_risk > syminfo.mintick
         sl_price := proposed_sl
         tp_price := close - proposed_risk * risk_reward
-        strategy.entry("Short Pullback", strategy.short, comment="Venda ADX Dinâmico")
+        strategy.entry("Short Pullback", strategy.short, comment="Venda ADX+RSI")
         strategy.exit("Exit Short", from_entry="Short Pullback", stop=sl_price, limit=tp_price)
 
 if strategy.position_size > 0 and not na(sl_price) and not na(tp_price)
@@ -176,7 +188,7 @@ if strategy.position_size < 0 and not na(sl_price) and not na(tp_price)
     strategy.exit("Exit Short", from_entry="Short Pullback", stop=sl_price, limit=tp_price)
 
 // =====================================================
-// 9. SAÍDA TÉCNICA PELA EMA WAVE
+// 10. SAÍDA TÉCNICA PELA EMA WAVE
 // =====================================================
 if strategy.position_size > 0 and close < emaWaveClose
     strategy.close("Long Pullback", comment="Saída Wave Close")
@@ -191,7 +203,7 @@ if position_just_closed
     tp_price := na
 
 // =====================================================
-// 10. PLOTS VISUAIS E BGCOLOR DINÂMICO
+// 11. PLOTS VISUAIS E BGCOLOR DINÂMICO
 // =====================================================
 pHigh = plot(emaWaveHigh, color=color.new(color.green, 30), linewidth=1, title="Wave High")
 pClose = plot(emaWaveClose, color=color.new(color.gray, 50), linewidth=1, title="Wave Close")
