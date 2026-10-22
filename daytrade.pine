@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=5
-strategy("Forex Day Trade - Wave Pullback + MTF + ADX Bgcolor",
-     shorttitle="Forex_Strategy_ADX",
+strategy("Forex Day Trade - ADX Dinâmico Multi-Timeframe",
+     shorttitle="Forex_ADX_Dynamic",
      overlay=true,
      initial_capital=10000,
      default_qty_type=strategy.percent_of_equity,
@@ -38,39 +38,53 @@ bool trend_bullish = ema80 > ema200
 bool trend_bearish = ema80 < ema200
 
 // =====================================================
-// 3. CÁLCULO E FILTRO DO ADX
+// 3. DETECÇÃO DINÂMICA DE TIMEFRAMES (CASCATA AUTOMÁTICA)
 // =====================================================
-int adx_len = input.int(14, "Período ADX", minval=1, group="Filtro ADX")
-int adx_threshold = input.int(20, "ADX Mínimo (Força de Tendência)", minval=1, group="Filtro ADX")
+int adx_len = input.int(14, "Período ADX", minval=1, group="Filtro ADX MTF")
+int adx_threshold = input.int(20, "ADX Mínimo", minval=1, group="Filtro ADX MTF")
 
-[di_plus, di_minus, adx_val] = ta.dmi(adx_len, adx_len)
+// Lógica de escolha de Timeframes baseada no gráfico atual:
+string tf_med = "60"  // Padrão 1H
+string tf_mac = "240" // Padrão 4H
 
-bool adx_strong_bull = (adx_val >= adx_threshold) and (di_plus > di_minus)
-bool adx_strong_bear = (adx_val >= adx_threshold) and (di_minus > di_plus)
-bool adx_weak        = adx_val < adx_threshold
+if timeframe.isseconds or (timeframe.isintraday and timeframe.multiplier <= 3)
+    tf_med := "5"    // 5m
+    tf_mac := "15"   // 15m
+else if timeframe.isintraday and timeframe.multiplier <= 5
+    tf_med := "15"   // 15m
+    tf_mac := "60"   // 1H
+else if timeframe.isintraday and timeframe.multiplier <= 15
+    tf_med := "60"   // 1H
+    tf_mac := "240"  // 4H
+else if timeframe.isintraday and timeframe.multiplier <= 60
+    tf_med := "240"  // 4H
+    tf_mac := "1D"   // 1D
+else
+    tf_med := "240"  // 4H
+    tf_mac := "1D"   // 1D
+
+// Função de cálculo seguro do ADX
+f_adx_status(_tf, _len, _thresh) =>
+    [p, m, a] = request.security(syminfo.tickerid, _tf, ta.dmi(_len, _len), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+    bool is_bull = (a[1] >= _thresh) and (p[1] > m[1])
+    bool is_bear = (a[1] >= _thresh) and (m[1] > p[1])
+    [is_bull, is_bear]
+
+[adx_med_bull, adx_med_bear] = f_adx_status(tf_med, adx_len, adx_threshold)
+[adx_mac_bull, adx_mac_bear] = f_adx_status(tf_mac, adx_len, adx_threshold)
+
+// ADX do Gráfico Atual
+[p_loc, m_loc, a_loc] = ta.dmi(adx_len, adx_len)
+bool adx_loc_bull = (a_loc >= adx_threshold) and (p_loc > m_loc)
+bool adx_loc_bear = (a_loc >= adx_threshold) and (m_loc > p_loc)
+
+// Alinhamento dos 3 Níveis Dinâmicos
+bool adx_all_bull = adx_loc_bull and adx_med_bull and adx_mac_bull
+bool adx_all_bear = adx_loc_bear and adx_med_bear and adx_mac_bear
+bool adx_weak     = a_loc < adx_threshold
 
 // =====================================================
-// 4. FILTRO MTF SEM USAR CANDLE MAIOR ABERTO
-// =====================================================
-bool use_htf_filter = input.bool(true, "Ativar filtro MTF", group="Filtro Macro (MTF)")
-string htf_tf = input.timeframe("240", "Timeframe maior", group="Filtro Macro (MTF)")
-int htf_ema_len = input.int(200, "Período EMA MTF", minval=1, group="Filtro Macro (MTF)")
-
-[htf_ema, htf_ema_prev] = request.security(
-     syminfo.tickerid,
-     htf_tf,
-     [ta.ema(close, htf_ema_len)[1], ta.ema(close, htf_ema_len)[2]],
-     gaps=barmerge.gaps_off,
-     lookahead=barmerge.lookahead_on)
-
-bool htf_bullish = htf_ema > htf_ema_prev
-bool htf_bearish = htf_ema < htf_ema_prev
-
-bool mtf_buy_allowed = not use_htf_filter or htf_bullish
-bool mtf_sell_allowed = not use_htf_filter or htf_bearish
-
-// =====================================================
-// 5. FILTRO DE LATERALIZAÇÃO
+// 4. FILTRO DE LATERALIZAÇÃO
 // =====================================================
 bool use_consolidation_filter = input.bool(true, "Ativar filtro de lateralização", group="Filtro de Lateralização")
 int consolidation_lookback = input.int(20, "Barras para analisar", minval=1, group="Filtro de Lateralização")
@@ -80,11 +94,11 @@ bool ema_crossed_now = ta.cross(ema9, ema21)
 float crosses_sum = math.sum(ema_crossed_now ? 1.0 : 0.0, consolidation_lookback)
 
 bool enough_cross_data = bar_index >= consolidation_lookback
-bool is_consolidated = use_consolidation_filter and enough_cross_data and crosses_sum >= max_allowed_crosses
-bool not_consolidated = not is_consolidated
+bool momentum_breakout = math.abs(ema9 - ema21) > ta.atr(14) * 0.3 and not adx_weak
+bool is_consolidated = use_consolidation_filter and enough_cross_data and (crosses_sum >= max_allowed_crosses) and not momentum_breakout
 
 // =====================================================
-// 6. ATR E GESTÃO DE RISCO
+// 5. ATR E GESTÃO DE RISCO
 // =====================================================
 int atr_len = input.int(14, "Período ATR", minval=1, group="Gestão de Risco")
 float atr_mult_sl = input.float(1.5, "Multiplicador ATR do Stop", minval=0.1, step=0.1, group="Gestão de Risco")
@@ -96,30 +110,36 @@ float atr = ta.atr(atr_len)
 strategy.risk.max_intraday_loss(max_daily_loss_pct, strategy.percent_of_equity)
 
 // =====================================================
-// 7. VALIDAÇÃO DOS INDICADORES
+// 6. VALIDAÇÃO E CONDIÇÕES DE PREÇO
 // =====================================================
-bool indicators_ready = not na(emaWaveHigh) and not na(emaWaveLow) and not na(emaWaveClose) and not na(ema80) and not na(ema200) and not na(atr) and atr > 0
-bool htf_ready = not use_htf_filter or (not na(htf_ema) and not na(htf_ema_prev))
+bool indicators_ready = not na(emaWaveHigh) and not na(emaWaveLow) and not na(ema80) and not na(ema200) and not na(atr) and atr > 0
 
-bool can_trade = indicators_ready and htf_ready and not is_consolidated and in_session and not adx_weak
+bool can_trade = indicators_ready and not is_consolidated and in_session
 
-// =====================================================
-// 8. SINAIS DE ENTRADA (Wave Verde + EMA 9 + Pullback/Rompimento)
-// =====================================================
-bool broke_wave_up   = ta.crossover(close, emaWaveHigh)
-bool pullback_wave_u = (close > emaWaveHigh) and (low <= emaWaveHigh) and (close > open)
-bool wave_buy_action = broke_wave_up or pullback_wave_u
-
-bool buy_trigger  = can_trade and trend_bullish and mtf_buy_allowed and (close > ema9) and wave_buy_action and adx_strong_bull
-
-bool broke_wave_down = ta.crossunder(close, emaWaveLow)
-bool pullback_wave_d = (close < emaWaveLow) and (high >= emaWaveLow) and (close < open)
-bool wave_sell_action= broke_wave_down or pullback_wave_d
-
-bool sell_trigger = can_trade and trend_bearish and mtf_sell_allowed and (close < ema9) and wave_sell_action and adx_strong_bear
+bool price_above_emas = (close > ema80) and (close > ema200)
+bool price_below_emas = (close < ema80) and (close < ema200)
 
 // =====================================================
-// 9. NÍVEIS DE STOP E ALVO
+// 7. SINAIS DE ENTRADA (MOMENTUM + PULLBACK)
+// =====================================================
+bool broke_wave_up     = ta.crossover(close, emaWaveHigh)
+bool pullback_wave_u   = (close > emaWaveHigh) and (low <= emaWaveHigh) and (close > open)
+bool strong_impulse_u  = (close > emaWaveHigh) and (close > ema9) and (ema9 > ema21) and (close > open)
+
+bool wave_buy_action   = broke_wave_up or pullback_wave_u or strong_impulse_u
+
+bool buy_trigger  = can_trade and trend_bullish and adx_all_bull and price_above_emas and (close > ema9) and wave_buy_action
+
+bool broke_wave_down   = ta.crossunder(close, emaWaveLow)
+bool pullback_wave_d   = (close < emaWaveLow) and (high >= emaWaveLow) and (close < open)
+bool strong_impulse_d  = (close < emaWaveLow) and (close < ema9) and (ema9 < ema21) and (close < open)
+
+bool wave_sell_action  = broke_wave_down or pullback_wave_d or strong_impulse_d
+
+bool sell_trigger = can_trade and trend_bearish and adx_all_bear and price_below_emas and (close < ema9) and wave_sell_action
+
+// =====================================================
+// 8. EXECUÇÃO DE POSIÇÕES
 // =====================================================
 var float sl_price = na
 var float tp_price = na
@@ -135,7 +155,7 @@ if new_long
     if proposed_risk > syminfo.mintick
         sl_price := proposed_sl
         tp_price := close + proposed_risk * risk_reward
-        strategy.entry("Long Pullback", strategy.long, comment="Compra Wave + ADX")
+        strategy.entry("Long Pullback", strategy.long, comment="Compra ADX Dinâmico")
         strategy.exit("Exit Long", from_entry="Long Pullback", stop=sl_price, limit=tp_price)
 
 if new_short
@@ -146,7 +166,7 @@ if new_short
     if proposed_risk > syminfo.mintick
         sl_price := proposed_sl
         tp_price := close - proposed_risk * risk_reward
-        strategy.entry("Short Pullback", strategy.short, comment="Venda Wave + ADX")
+        strategy.entry("Short Pullback", strategy.short, comment="Venda ADX Dinâmico")
         strategy.exit("Exit Short", from_entry="Short Pullback", stop=sl_price, limit=tp_price)
 
 if strategy.position_size > 0 and not na(sl_price) and not na(tp_price)
@@ -156,7 +176,7 @@ if strategy.position_size < 0 and not na(sl_price) and not na(tp_price)
     strategy.exit("Exit Short", from_entry="Short Pullback", stop=sl_price, limit=tp_price)
 
 // =====================================================
-// 10. SAÍDA TÉCNICA PELA EMA WAVE
+// 9. SAÍDA TÉCNICA PELA EMA WAVE
 // =====================================================
 if strategy.position_size > 0 and close < emaWaveClose
     strategy.close("Long Pullback", comment="Saída Wave Close")
@@ -171,7 +191,7 @@ if position_just_closed
     tp_price := na
 
 // =====================================================
-// 11. VISUALIZAÇÃO DO CANAL WAVE E MÉDIAS
+// 10. PLOTS VISUAIS E BGCOLOR DINÂMICO
 // =====================================================
 pHigh = plot(emaWaveHigh, color=color.new(color.green, 30), linewidth=1, title="Wave High")
 pClose = plot(emaWaveClose, color=color.new(color.gray, 50), linewidth=1, title="Wave Close")
@@ -183,29 +203,22 @@ plot(ema80, color=color.yellow, linewidth=2, title="EMA 80")
 plot(ema200, color=color.orange, linewidth=2, title="EMA 200")
 plot(ema9, color=color.rgb(0, 128, 11), title="EMA 9")
 
-// =====================================================
-// 12. FUNDO COLORIDO CONFORME ADX E LATERALIZAÇÃO
-// =====================================================
-bool price_inside_wave = close >= emaWaveLow and close <= emaWaveHigh
-
 color bg_color = na
 if is_consolidated or adx_weak
-    bg_color := color.new(color.orange, 88) // Laranja: Sem tendência / Lateral
-else if adx_strong_bull
-    bg_color := color.new(color.green, 93)  // Verde suave: Tendência Forte de Alta
-else if adx_strong_bear
-    bg_color := color.new(color.red, 93)    // Vermelho suave: Tendência Forte de Baixa
-else if price_inside_wave
-    bg_color := color.new(color.gray, 96)   // Cinza: Preço dentro da Wave
+    bg_color := color.new(color.orange, 88) 
+else if adx_all_bull
+    bg_color := color.new(color.green, 92)  
+else if adx_all_bear
+    bg_color := color.new(color.red, 92)    
+else
+    bg_color := color.new(color.gray, 96)   
 
-bgcolor(bg_color, title="Fundo ADX / Tendência")
+bgcolor(bg_color, title="Fundo ADX Dinâmico")
 
 plot(strategy.position_size != 0 ? sl_price : na, color=color.red, style=plot.style_linebr, linewidth=2, title="Stop Loss")
 plot(strategy.position_size != 0 ? tp_price : na, color=color.green, style=plot.style_linebr, linewidth=2, title="Take Profit")
 
-// =====================================================
-// 13. MARCADORES DOS SINAIS E VELAS
-// =====================================================
 plotshape(new_long, title="Sinal Compra", text="COMPRA", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
 plotshape(new_short, title="Sinal Venda", text="VENDA", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
-barcolor(trend_bullish ? color.green : trend_bearish ? color.red : color.blue)
+
+barcolor(adx_all_bull ? color.green : adx_all_bear ? color.red : color.gray)
