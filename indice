@@ -1,79 +1,72 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
-//@version=5
-strategy("Mini Índice Pro - Versão Flexível (Mais Sinais)",
-     shorttitle="WIN_Pro_Flexivel",
-     overlay=true,
-     initial_capital=100000,
-     default_qty_type=strategy.fixed,
-     default_qty_value=1,
-     pyramiding=0,
-     process_orders_on_close=true)
+//@version=6
+strategy('Mini Índice Pro - Versão Flexível (Mais Sinais)', shorttitle = 'WIN_Pro_Flexivel', overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
 
 // =====================================================
 // 1. HORÁRIO DE OPERAÇÃO E FECHAMENTO INTRA-DAY (B3)
 // =====================================================
-bool use_time_filter = input.bool(true, "Filtrar por horário estrito", group="Horário de Operação")
-string sessao        = input.session("0915-1630", "Janela de Entradas (B3)", group="Horário de Operação")
-string sessao_fechar = input.session("1700-1715", "Horário Zeragem Forçada", group="Horário de Operação")
+bool use_time_filter = input.bool(true, 'Filtrar por horário estrito', group = 'Horário de Operação')
+string sessao = input.session('0915-1630', 'Janela de Entradas (B3)', group = 'Horário de Operação')
+string sessao_fechar = input.session('1700-1715', 'Horário Zeragem Forçada', group = 'Horário de Operação')
 
-bool in_session   = not use_time_filter or not na(time(timeframe.period, sessao))
-bool force_close  = not na(time(timeframe.period, sessao_fechar))
+bool in_session = not use_time_filter or not na(time(timeframe.period, sessao))
+bool force_close = not na(time(timeframe.period, sessao_fechar))
 
 // =====================================================
 // 2. TENDÊNCIA, MÉDIAS E EMA WAVE
 // =====================================================
-int wave_len      = input.int(34, "Período EMA Wave", minval=1, group="Parâmetros de Tendência")
-int ema80_len     = input.int(80, "EMA 80", minval=1, group="Parâmetros de Tendência")
-int ema_macro_len = input.int(200, "EMA 200", minval=1, group="Parâmetros de Tendência")
+int wave_len = input.int(34, 'Período EMA Wave', minval = 1, group = 'Parâmetros de Tendência')
+int ema80_len = input.int(80, 'EMA 80', minval = 1, group = 'Parâmetros de Tendência')
+int ema_macro_len = input.int(200, 'EMA 200', minval = 1, group = 'Parâmetros de Tendência')
 
 // EMA Wave
-float emaWaveHigh  = ta.ema(high, wave_len)
+float emaWaveHigh = ta.ema(high, wave_len)
 float emaWaveClose = ta.ema(close, wave_len)
-float emaWaveLow   = ta.ema(low, wave_len)
+float emaWaveLow = ta.ema(low, wave_len)
 
 // Médias principais
-float ema9   = ta.ema(close, 9)
-float ema21  = ta.ema(close, 21)
-float ema80  = ta.ema(close, ema80_len)
+float ema9 = ta.ema(close, 9)
+float ema21 = ta.ema(close, 21)
+float ema80 = ta.ema(close, ema80_len)
 float ema200 = ta.ema(close, ema_macro_len)
 
 // Alinhamento Macro Flexível (Apenas 80 > 200 e preço acima da 80)
-bool alignment_bullish = (close > ema80) and (ema80 > ema200)
-bool alignment_bearish = (close < ema80) and (ema80 < ema200)
+bool alignment_bullish = close > ema80 and ema80 > ema200
+bool alignment_bearish = close < ema80 and ema80 < ema200
 
 // =====================================================
 // 3. ADX LOCAL (Mais simples para não travar tanto)
 // =====================================================
-bool use_adx_filter = input.bool(true, "Ativar Filtro ADX", group="Filtro ADX")
-int adx_len         = input.int(14, "Período ADX", minval=1, group="Filtro ADX")
-int adx_threshold   = input.int(15, "ADX Mínimo (Mais Baixo = Mais Sinais)", minval=1, group="Filtro ADX")
+bool use_adx_filter = input.bool(true, 'Ativar Filtro ADX', group = 'Filtro ADX')
+int adx_len = input.int(14, 'Período ADX', minval = 1, group = 'Filtro ADX')
+int adx_threshold = input.int(15, 'ADX Mínimo (Mais Baixo = Mais Sinais)', minval = 1, group = 'Filtro ADX')
 
 [p_loc, m_loc, a_loc] = ta.dmi(adx_len, adx_len)
-bool adx_bull = not use_adx_filter or ((a_loc >= adx_threshold) and (p_loc > m_loc))
-bool adx_bear = not use_adx_filter or ((a_loc >= adx_threshold) and (m_loc > p_loc))
+bool adx_bull = not use_adx_filter or a_loc >= adx_threshold and p_loc > m_loc
+bool adx_bear = not use_adx_filter or a_loc >= adx_threshold and m_loc > p_loc
 bool adx_weak = a_loc < adx_threshold
 
 // =====================================================
 // 4. FILTRO DE LATERALIZAÇÃO
 // =====================================================
-bool use_consolidation_filter = input.bool(true, "Ativar Filtro de Lateralização", group="Filtro de Lateralização")
-int consolidation_lookback   = input.int(20, "Barras para Analisar", minval=1, group="Filtro de Lateralização")
-int max_allowed_crosses     = input.int(4, "Limite de Cruzamentos (9/21)", minval=1, group="Filtro de Lateralização")
+bool use_consolidation_filter = input.bool(true, 'Ativar Filtro de Lateralização', group = 'Filtro de Lateralização')
+int consolidation_lookback = input.int(20, 'Barras para Analisar', minval = 1, group = 'Filtro de Lateralização')
+int max_allowed_crosses = input.int(4, 'Limite de Cruzamentos (9/21)', minval = 1, group = 'Filtro de Lateralização')
 
-bool ema_crossed_now   = ta.cross(ema9, ema21)
-float crosses_sum      = math.sum(ema_crossed_now ? 1.0 : 0.0, consolidation_lookback)
+bool ema_crossed_now = ta.cross(ema9, ema21)
+float crosses_sum = math.sum(ema_crossed_now ? 1.0 : 0.0, consolidation_lookback)
 bool enough_cross_data = bar_index >= consolidation_lookback
-bool is_consolidated   = use_consolidation_filter and enough_cross_data and (crosses_sum >= max_allowed_crosses)
+bool is_consolidated = use_consolidation_filter and enough_cross_data and crosses_sum >= max_allowed_crosses
 
 // =====================================================
 // 5. ATR E GESTÃO DE RISCO / BREAKEVEN
 // =====================================================
-int atr_len              = input.int(14, "Período ATR", minval=1, group="Gestão de Risco")
-float atr_mult_sl        = input.float(1.5, "Multiplicador ATR do Stop", minval=0.1, step=0.1, group="Gestão de Risco")
-float risk_reward        = input.float(2.0, "Risco/Retorno", minval=0.1, step=0.1, group="Gestão de Risco")
-bool use_breakeven       = input.bool(true, "Ativar Breakeven Automático", group="Gestão de Risco")
-float be_trigger_pts     = input.float(150.0, "Gatilho de Breakeven (Pontos)", minval=50.0, step=25.0, group="Gestão de Risco")
-float max_daily_loss_pts = input.float(1500.0, "Limite de Perda Diária", minval=100.0, step=50.0, group="Gestão de Risco")
+int atr_len = input.int(14, 'Período ATR', minval = 1, group = 'Gestão de Risco')
+float atr_mult_sl = input.float(1.5, 'Multiplicador ATR do Stop', minval = 0.1, step = 0.1, group = 'Gestão de Risco')
+float risk_reward = input.float(2.0, 'Risco/Retorno', minval = 0.1, step = 0.1, group = 'Gestão de Risco')
+bool use_breakeven = input.bool(true, 'Ativar Breakeven Automático', group = 'Gestão de Risco')
+float be_trigger_pts = input.float(150.0, 'Gatilho de Breakeven (Pontos)', minval = 50.0, step = 25.0, group = 'Gestão de Risco')
+float max_daily_loss_pts = input.float(1500.0, 'Limite de Perda Diária', minval = 100.0, step = 50.0, group = 'Gestão de Risco')
 
 float atr = ta.atr(atr_len)
 strategy.risk.max_intraday_loss(max_daily_loss_pts, strategy.cash)
@@ -83,10 +76,10 @@ strategy.risk.max_intraday_loss(max_daily_loss_pts, strategy.cash)
 // =====================================================
 bool can_trade = not na(ema200) and not na(atr) and in_session and not is_consolidated
 
-bool cross_buy  = ta.crossover(ema9, ema21)
+bool cross_buy = ta.crossover(ema9, ema21)
 bool cross_sell = ta.crossunder(ema9, ema21)
 
-bool buy_trigger  = can_trade and alignment_bullish and adx_bull and cross_buy
+bool buy_trigger = can_trade and alignment_bullish and adx_bull and cross_buy
 bool sell_trigger = can_trade and alignment_bearish and adx_bear and cross_sell
 
 // =====================================================
@@ -95,77 +88,82 @@ bool sell_trigger = can_trade and alignment_bearish and adx_bear and cross_sell
 var float sl_price = na
 var float tp_price = na
 
-bool new_long  = buy_trigger and strategy.position_size == 0
+bool new_long = buy_trigger and strategy.position_size == 0
 bool new_short = sell_trigger and strategy.position_size == 0
 
 if new_long
-    float proposed_sl = close - (atr * atr_mult_sl)
+    float proposed_sl = close - atr * atr_mult_sl
     float proposed_risk = close - proposed_sl
 
     if proposed_risk > syminfo.mintick
         sl_price := proposed_sl
-        tp_price := close + (proposed_risk * risk_reward)
-        strategy.entry("Compra Pro", strategy.long, comment="Compra WIN")
-        strategy.exit("Exit Long", from_entry="Compra Pro", stop=sl_price, limit=tp_price)
+        tp_price := close + proposed_risk * risk_reward
+        strategy.entry('Compra Pro', strategy.long, comment = 'Compra WIN')
+        strategy.exit('Exit Long', from_entry = 'Compra Pro', stop = sl_price, limit = tp_price)
 
 if new_short
-    float proposed_sl = close + (atr * atr_mult_sl)
+    float proposed_sl = close + atr * atr_mult_sl
     float proposed_risk = proposed_sl - close
 
     if proposed_risk > syminfo.mintick
         sl_price := proposed_sl
-        tp_price := close - (proposed_risk * risk_reward)
-        strategy.entry("Venda Pro", strategy.short, comment="Venda WIN")
-        strategy.exit("Exit Short", from_entry="Venda Pro", stop=sl_price, limit=tp_price)
+        tp_price := close - proposed_risk * risk_reward
+        strategy.entry('Venda Pro', strategy.short, comment = 'Venda WIN')
+        strategy.exit('Exit Short', from_entry = 'Venda Pro', stop = sl_price, limit = tp_price)
 
 // Lógica de Breakeven Automático
 if strategy.position_size > 0 and use_breakeven
-    if (high - strategy.position_avg_price) >= be_trigger_pts
+    if high - strategy.position_avg_price >= be_trigger_pts
         sl_price := math.max(sl_price, strategy.position_avg_price + 10)
-        strategy.exit("Exit Long", from_entry="Compra Pro", stop=sl_price, limit=tp_price)
+        strategy.exit('Exit Long', from_entry = 'Compra Pro', stop = sl_price, limit = tp_price)
 
 if strategy.position_size < 0 and use_breakeven
-    if (strategy.position_avg_price - low) >= be_trigger_pts
+    if strategy.position_avg_price - low >= be_trigger_pts
         sl_price := math.min(sl_price, strategy.position_avg_price - 10)
-        strategy.exit("Exit Short", from_entry="Venda Pro", stop=sl_price, limit=tp_price)
+        strategy.exit('Exit Short', from_entry = 'Venda Pro', stop = sl_price, limit = tp_price)
 
 // Saída na perda/ganho da EMA 9
 if strategy.position_size > 0 and close < ema9
-    strategy.close("Compra Pro", comment="Saída EMA 9")
+    strategy.close('Compra Pro', comment = 'Saída EMA 9')
 
 if strategy.position_size < 0 and close > ema9
-    strategy.close("Venda Pro", comment="Saída EMA 9")
+    strategy.close('Venda Pro', comment = 'Saída EMA 9')
 
 if force_close
-    strategy.close_all(comment="Zeragem Fim de Dia")
+    strategy.close_all(comment = 'Zeragem Fim de Dia')
 
 // =====================================================
 // 8. PLOTS VISUAIS E BGCOLOR
 // =====================================================
-pHigh  = plot(emaWaveHigh, color=color.new(color.green, 30), linewidth=1, title="Wave High")
-pClose = plot(emaWaveClose, color=color.new(color.gray, 50), linewidth=1, title="Wave Close")
-pLow   = plot(emaWaveLow, color=color.new(color.red, 30), linewidth=1, title="Wave Low")
-fill(pHigh, pLow, color=color.new(color.blue, 92), title="Canal Wave")
+pHigh = plot(emaWaveHigh, color = color.new(color.green, 30), linewidth = 1, title = 'Wave High')
+pClose = plot(emaWaveClose, color = color.new(color.gray, 50), linewidth = 1, title = 'Wave Close')
+pLow = plot(emaWaveLow, color = color.new(color.red, 30), linewidth = 1, title = 'Wave Low')
+fill(pHigh, pLow, color = color.new(color.blue, 92), title = 'Canal Wave')
 
-plot(ema9, color=color.green, linewidth=1, title="EMA 9")
-plot(ema21, color=color.red, linewidth=1, title="EMA 21")
-plot(ema80, color=color.yellow, linewidth=2, title="EMA 80")
-plot(ema200, color=color.orange, linewidth=2, title="EMA 200")
+plot(ema9, color = color.green, linewidth = 1, title = 'EMA 9')
+plot(ema21, color = color.red, linewidth = 1, title = 'EMA 21')
+plot(ema80, color = color.yellow, linewidth = 2, title = 'EMA 80')
+plot(ema200, color = color.orange, linewidth = 2, title = 'EMA 200')
 
 color bg_color = na
 if is_consolidated
-    bg_color := color.new(color.orange, 88) 
+    bg_color := color.new(color.orange, 88)
+    bg_color
 else if adx_bull
-    bg_color := color.new(color.green, 92)  
+    bg_color := color.new(color.green, 92)
+    bg_color
 else if adx_bear
-    bg_color := color.new(color.red, 92)    
+    bg_color := color.new(color.red, 92)
+    bg_color
 else
-    bg_color := color.new(color.gray, 96)   
+    bg_color := color.new(color.gray, 96)
+    bg_color
 
-bgcolor(bg_color, title="Fundo ADX e Lateralização")
+bgcolor(bg_color, title = 'Fundo ADX e Lateralização')
 
-plot(strategy.position_size != 0 ? sl_price : na, color=color.red, style=plot.style_linebr, linewidth=2, title="Stop Loss")
-plot(strategy.position_size != 0 ? tp_price : na, color=color.green, style=plot.style_linebr, linewidth=2, title="Take Profit")
+plot(strategy.position_size != 0 ? sl_price : na, color = color.red, style = plot.style_linebr, linewidth = 2, title = 'Stop Loss')
+plot(strategy.position_size != 0 ? tp_price : na, color = color.green, style = plot.style_linebr, linewidth = 2, title = 'Take Profit')
 
-plotshape(new_long, title="Sinal Compra", text="COMPRA WIN", location=location.belowbar, style=shape.labelup, size=size.small, color=color.green, textcolor=color.white)
-plotshape(new_short, title="Sinal Venda", text="VENDA WIN", location=location.abovebar, style=shape.labeldown, size=size.small, color=color.red, textcolor=color.white)
+plotshape(new_long, title = 'Sinal Compra', text = 'COMPRA WIN', location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
+plotshape(new_short, title = 'Sinal Venda', text = 'VENDA WIN', location = location.abovebar, style = shape.labeldown, size = size.small, color = color.red, textcolor = color.white)
+
