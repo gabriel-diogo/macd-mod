@@ -1,0 +1,175 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=6
+
+strategy('Mini Índice Pro - PMax + MACD + ADX (Day Trade)', shorttitle = 'WIN_PMax_Pro', overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, process_orders_on_close = true)
+
+// =====================================================
+// 1. HORÁRIO DE OPERAÇÃO E ZERAGEM B3
+// =====================================================
+bool use_time_filter = input.bool(true, title = 'Filtrar por Horário B3', group = 'Horário de Operação')
+string sessao        = input.session("0915-1630", title = 'Janela de Entradas', group = 'Horário de Operação')
+string sessao_fechar = input.session("1700-1715", title = 'Horário Zeragem Forçada', group = 'Horário de Operação')
+
+bool in_session  = not use_time_filter or not na(time(timeframe.period, sessao))
+bool force_close = not na(time(timeframe.period, sessao_fechar))
+
+// --- INPUTS: PMAX & ATR ---
+int periods = input.int(10, title = 'ATR Length', group = 'PMax Settings')
+float multiplier = input.float(1.5, title = 'ATR Multiplier', step = 0.1, group = 'PMax Settings')
+int ma_length = input.int(12, title = 'Moving Average Length', minval = 1, group = 'PMax Settings')
+bool show_pmax = input.bool(true, title = 'Show PMax Line', group = 'PMax Settings')
+
+// --- INPUTS: MACD ---
+int fast_length = input.int(12, title = 'MACD Fast Length', group = 'MACD Settings')
+int slow_length = input.int(26, title = 'MACD Slow Length', group = 'MACD Settings')
+int signal_length = input.int(9, title = 'MACD Signal Smoothing', group = 'MACD Settings')
+
+// --- INPUTS: RSI FILTER ---
+bool use_rsi_filter = input.bool(true, title = 'Usar Filtro RSI', group = 'RSI Filter')
+int rsi_length = input.int(14, title = 'RSI Length', group = 'RSI Filter')
+int rsi_oversold = input.int(40, title = 'RSI Min Level', group = 'RSI Filter')
+int rsi_overbought = input.int(75, title = 'RSI Max Level', group = 'RSI Filter')
+
+// --- INPUTS: TREND MAs & TRIGGERS ---
+bool use_ma_filter = input.bool(true, title = 'Use MAs Filter (9, 21, 50, 80)', group = 'Trend & Volume Filter')
+bool use_ema_cross = input.bool(true, title = 'Use EMA 9/21 Crossover Trigger (Buy)', group = 'Trend & Volume Filter')
+bool use_ema_cross_down = input.bool(true, title = 'Use EMA 9/21 Crossunder Trigger (Sell)', group = 'Trend & Volume Filter')
+bool use_vol_filter = input.bool(true, title = 'Use Volume Filter', group = 'Trend & Volume Filter')
+int vol_len = input.int(20, title = 'Volume SMA Length', minval = 1, group = 'Trend & Volume Filter')
+
+// --- INPUTS: SEÇÃO EXCLUSIVA DO FILTRO MULTI-TIMEFRAME ---
+bool use_htf_filter = input.bool(true, title = 'Ligar / Desligar Filtro HTF', group = 'HTF (Filtro de Tempo Maior)')
+string htf_resolution = input.timeframe('60', title = 'Resolução do Filtro (ex: 60 = 1h)', group = 'HTF (Filtro de Tempo Maior)')
+
+// --- INPUTS: FILTRO DE SUPORTE E RESISTÊNCIA ---
+bool use_sr_filter = input.bool(true, title = 'Usar Filtro de Rompimento (S&R)', group = 'Filtro Suporte & Resistência')
+int sr_len = input.int(20, title = 'Período de S&R', minval = 1, group = 'Filtro Suporte & Resistência')
+
+// --- INPUTS: FILTRO DE CONSOLIDAÇÃO ---
+bool use_consolidation_filter = input.bool(true, title = 'Ativar Filtro de Consolidação', group = 'Filtro de Consolidação')
+int consolidation_lookback = input.int(20, title = 'Janela de Barras para Cruzamentos', minval = 1, group = 'Filtro de Consolidação')
+int max_allowed_crosses = input.int(4, title = 'Máximo de Cruzamentos Permitidos', minval = 1, group = 'Filtro de Consolidação')
+
+// --- INPUTS: RISK MANAGEMENT ---
+float sl_pts = input.float(300.0, title = 'Stop Loss Fixo (Pontos)', step = 50.0, group = 'Gestão de Risco WIN')
+float tp_pts = input.float(600.0, title = 'Take Profit Fixo (Pontos)', step = 50.0, group = 'Gestão de Risco WIN')
+bool use_trail = input.bool(true, title = 'Ativar Trailing Stop (PMax)', group = 'Gestão de Risco WIN')
+
+// --- INPUTS: EMA WAVE (34) ---
+bool use_ema_wave = input.bool(true, title = 'Ativar EMA Wave (34)', group = 'EMA Wave 34')
+int wave_period = input.int(34, title = 'Período EMA Wave', group = 'EMA Wave 34')
+
+// --- INPUTS: FILTRO ADX ---
+bool use_adx_filter = input.bool(true, title = 'Ligar / Desligar Filtro ADX', group = 'Filtro ADX')
+int adx_len = input.int(14, title = 'ADX Smoothing Length', group = 'Filtro ADX')
+int adx_threshold = input.int(18, title = 'ADX Tendência Mínima', group = 'Filtro ADX')
+
+// --- CALCULATIONS: ATR & PMAX ---
+float src = (high + low) / 2
+float atr_val = ta.atr(periods)
+float mavg = ta.ema(src, ma_length)
+
+float long_stop = mavg - multiplier * atr_val
+float long_stop_prev = nz(long_stop[1], long_stop)
+long_stop := mavg > long_stop_prev ? math.max(long_stop, long_stop_prev) : long_stop
+
+float short_stop = mavg + multiplier * atr_val
+float short_stop_prev = nz(short_stop[1], short_stop)
+short_stop := mavg < short_stop_prev ? math.min(short_stop, short_stop_prev) : short_stop
+
+var int pmax_dir = 1
+pmax_dir := nz(pmax_dir[1], 1)
+pmax_dir := pmax_dir == -1 and mavg > short_stop_prev ? 1 : pmax_dir == 1 and mavg < long_stop_prev ? -1 : pmax_dir
+float pmax = pmax_dir == 1 ? long_stop : short_stop
+
+// --- CALCULATIONS: MACD & RSI & MAs ---
+float fast_ma = ta.ema(close, fast_length)
+float slow_ma = ta.ema(close, slow_length)
+float macd = fast_ma - slow_ma
+float signal_line = ta.sma(macd, signal_length)
+float hist = macd - signal_line
+
+float rsi_val = ta.rsi(close, rsi_length)
+
+float ema9 = ta.ema(close, 9)
+float ema21 = ta.ema(close, 21)
+float ema50 = ta.ema(close, 50)
+float ema80 = ta.ema(close, 80)
+float vol_sma = ta.sma(volume, vol_len)
+
+bool volume_ok = not use_vol_filter or volume > vol_sma
+bool ma_trend_ok = not use_ma_filter or (close > ema50 and ema9 > ema21)
+
+// --- EMA WAVE ---
+float emaWaveHigh = ta.ema(high, wave_period)
+float emaWaveClose = ta.ema(close, wave_period)
+float emaWaveLow = ta.ema(low, wave_period)
+color wave_bar_color = close > emaWaveHigh ? color.green : close < emaWaveLow ? color.red : color.blue
+
+// --- ADX ---
+[p_di, m_di, adx] = ta.dmi(adx_len, adx_len)
+bool adx_trend_ok = not use_adx_filter or adx > adx_threshold
+
+// --- MULTI-TIMEFRAME ---
+float raw_htf_close = request.security(syminfo.tickerid, htf_resolution, close[1], barmerge.gaps_off, barmerge.lookahead_off)
+float raw_htf_ema = request.security(syminfo.tickerid, htf_resolution, ta.ema(close, 50)[1], barmerge.gaps_off, barmerge.lookahead_off)
+bool htf_trend_ok = not use_htf_filter or nz(raw_htf_close, close) > nz(raw_htf_ema, close)
+
+// --- SUPORTE E RESISTÊNCIA ---
+float resistance = ta.highest(high[1], sr_len)
+float support = ta.lowest(low[1], sr_len)
+bool sr_ok = not use_sr_filter or close >= resistance or close > support
+
+// --- CONSOLIDAÇÃO ---
+bool ema_crossed_now = ta.crossover(ema9, ema21) or ta.crossunder(ema9, ema21)
+var int total_crosses_recent = 0
+int cross_value = ema_crossed_now ? 1 : 0
+total_crosses_recent := nz(total_crosses_recent[1]) + cross_value - (bar_index >= consolidation_lookback ? nz(cross_value[consolidation_lookback]) : 0)
+bool is_consolidated = use_consolidation_filter and total_crosses_recent >= max_allowed_crosses
+
+// --- CONDIÇÕES DE COMPRA ---
+bool macd_cond = ta.crossover(macd, signal_line) or (hist > 0 and hist > hist[1])
+bool price_above_all_mas = close > ema9 and close > ema21 and close > ema50 and close > ema80
+bool ema_cross_cond = ta.crossover(ema9, ema21) and price_above_all_mas
+
+bool trigger_buy = macd_cond or (use_ema_cross and ema_cross_cond)
+bool rsi_cond = not use_rsi_filter or (rsi_val > rsi_oversold and rsi_val < rsi_overbought)
+
+bool buy_condition = trigger_buy and close > pmax and rsi_cond and ma_trend_ok and volume_ok and sr_ok and not is_consolidated and htf_trend_ok and adx_trend_ok and in_session
+
+// --- CONDIÇÕES DE SAÍDA ---
+bool raw_sell_condition = ta.crossunder(close, pmax) or ta.crossunder(macd, signal_line) or (use_ema_cross_down and ta.crossunder(ema9, ema21))
+bool sell_condition = raw_sell_condition or is_consolidated
+
+// --- EXECUÇÃO DE ORDENS ---
+if buy_condition and strategy.position_size == 0
+    strategy.entry('Compra WIN', strategy.long, comment = 'Compra PMax/MACD')
+
+if (sell_condition or force_close) and strategy.position_size > 0
+    strategy.close('Compra WIN', comment = 'Saída Técnica / Fim Dia')
+
+// --- GESTÃO DE RISCO (PONTOS / TRAILING) ---
+if strategy.position_size > 0
+    float entry_p = strategy.opentrades.entry_price(0)
+    float target_p = entry_p + tp_pts
+    float stop_p = use_trail ? math.max(entry_p - sl_pts, pmax) : entry_p - sl_pts
+    
+    strategy.exit('SL / TP', 'Compra WIN', limit = target_p, stop = stop_p, comment_loss = 'Stop Loss', comment_profit = 'Take Profit')
+
+// --- GERENCIAMENTO DE RISCO INTRADAY (MAX LOSS) ---
+float maxIdLossPcnt = input.float(4.0, title = 'Max Intraday Loss (%)', minval = 0.1, maxval = 100, step = 0.5, group = 'Gestão de Risco')
+strategy.risk.max_intraday_loss(maxIdLossPcnt, strategy.percent_of_equity)
+
+// --- PLOTS VISUAIS ---
+bgcolor(is_consolidated ? color.new(color.orange, 90) : na, title = 'Fundo de Consolidação')
+bgcolor(use_adx_filter and adx > adx_threshold ? color.new(color.green, 95) : na, title = 'Fundo Tendência Forte ADX')
+
+plot(show_pmax ? mavg : na, color = color.new(color.blue, 0), linewidth = 2, title = 'Moving Avg Line')
+plot(pmax, color = pmax_dir == 1 ? color.aqua : color.fuchsia, linewidth = 2, title = 'PMax Stop Line')
+
+plot(ema9, color = color.yellow, title = 'EMA 9', linewidth = 2)
+plot(ema21, color = color.orange, title = 'EMA 21', linewidth = 2)
+plot(ema50, color = color.red, title = 'EMA 50', linewidth = 1)
+plot(ema80, title = 'EMA 80', color = color.lime, linewidth = 2)
+
+plotshape(buy_condition, title = 'Sinal Compra', text = 'COMPRA', location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
