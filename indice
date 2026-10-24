@@ -1,6 +1,6 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=6
-strategy("Mini Índice Pro - Saída pela EMA Wave", shorttitle = "WIN_Pro_WaveExit", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
+strategy("Mini Índice Pro - Stop 500 & Trail por Sinal", shorttitle = "WIN_Pro_Stop500", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
 
 // =====================================================
 // 1. HORÁRIO DE ENTRADA (B3)
@@ -57,22 +57,21 @@ bool enough_cross_data = bar_index >= consolidation_lookback
 bool is_consolidated = use_consolidation_filter and enough_cross_data and crosses_sum >= max_allowed_crosses
 
 // =====================================================
-// 5. ATR E GESTÃO DE RISCO / BREAKEVEN
+// 5. GESTÃO DE RISCO (STOP EM PONTOS & SUBIDA DE STOP)
 // =====================================================
-int atr_len = input.int(14, "Período ATR", minval = 1, group = "Gestão de Risco")
-float atr_mult_sl = input.float(1.5, "Multiplicador ATR do Stop", minval = 0.1, step = 0.1, group = "Gestão de Risco")
-float risk_reward = input.float(2.0, "Risco/Retorno", minval = 0.1, step = 0.1, group = "Gestão de Risco")
-bool use_breakeven = input.bool(true, "Ativar Breakeven Automático", group = "Gestão de Risco")
-float be_trigger_pts = input.float(150.0, "Gatilho de Breakeven (Pontos)", minval = 50.0, step = 25.0, group = "Gestão de Risco")
-float max_daily_loss_pts = input.float(1500.0, "Limite de Perda Diária", minval = 100.0, step = 50.0, group = "Gestão de Risco")
+groupRisk = "Gestão de Risco & Stop"
+float stop_pts = input.float(500.0, "Stop Loss Inicial (Pontos)", step = 25.0, group = groupRisk)
+float take_pts = input.float(1000.0, "Take Profit (Pontos)", step = 50.0, group = groupRisk)
+bool raise_stop_on_new_signal = input.bool(true, "Subir Stop na Nova Compra", group = groupRisk)
+int wave_exit_confirm = input.int(2, "Barras seguidas sob a Wave p/ Sair", minval = 1, group = groupRisk)
 
-float atr = ta.atr(atr_len)
+float max_daily_loss_pts = input.float(1500.0, "Limite de Perda Diária (Pontos)", minval = 100.0, step = 50.0, group = groupRisk)
 strategy.risk.max_intraday_loss(max_daily_loss_pts, strategy.cash)
 
 // =====================================================
 // 6. GATILHOS DE ENTRADA
 // =====================================================
-bool can_trade = not na(ema200) and not na(atr) and in_session and not is_consolidated
+bool can_trade = not na(ema200) and in_session and not is_consolidated
 
 bool cross_buy = ta.crossover(ema9, ema21)
 bool cross_sell = ta.crossunder(ema9, ema21)
@@ -81,56 +80,62 @@ bool buy_trigger = can_trade and alignment_bullish and adx_bull and cross_buy
 bool sell_trigger = can_trade and alignment_bearish and adx_bear and cross_sell
 
 // =====================================================
-// 7. EXECUÇÃO DE POSIÇÕES
+// 7. EXECUÇÃO DE POSIÇÕES E GERENCIAMENTO DE STOP
 // =====================================================
-var float sl_price = na
-var float tp_price = na
+var float active_sl = na
+var float active_tp = na
 
-bool new_long = buy_trigger and strategy.position_size == 0
-bool new_short = sell_trigger and strategy.position_size == 0
+// Nova Entrada na Compra
+if buy_trigger and strategy.position_size == 0
+    active_sl := close - stop_pts
+    active_tp := close + take_pts
+    strategy.entry("Compra Pro", strategy.long, comment = "Compra WIN")
+    strategy.exit("Exit Long", from_entry = "Compra Pro", stop = active_sl, limit = active_tp)
 
-if new_long
-    float proposed_sl = close - atr * atr_mult_sl
-    float proposed_risk = close - proposed_sl
+// Se já estiver comprado e der uma NOVA compra, ele eleva o Stop para a região atual
+if buy_trigger and strategy.position_size > 0 and raise_stop_on_new_signal
+    float new_proposed_sl = close - stop_pts
+    if new_proposed_sl > active_sl
+        active_sl := new_proposed_sl
+        strategy.exit("Exit Long", from_entry = "Compra Pro", stop = active_sl, limit = active_tp)
 
-    if proposed_risk > syminfo.mintick
-        sl_price := proposed_sl
-        tp_price := close + proposed_risk * risk_reward
-        strategy.entry("Compra Pro", strategy.long, comment = "Compra WIN")
-        strategy.exit("Exit Long", from_entry = "Compra Pro", stop = sl_price, limit = tp_price)
+// Nova Entrada na Venda
+if sell_trigger and strategy.position_size == 0
+    active_sl := close + stop_pts
+    active_tp := close - take_pts
+    strategy.entry("Venda Pro", strategy.short, comment = "Venda WIN")
+    strategy.exit("Exit Short", from_entry = "Venda Pro", stop = active_sl, limit = active_tp)
 
-if new_short
-    float proposed_sl = close + atr * atr_mult_sl
-    float proposed_risk = proposed_sl - close
+// Se já estiver vendido e der uma NOVA venda, ele baixa o Stop de venda
+if sell_trigger and strategy.position_size < 0 and raise_stop_on_new_signal
+    float new_proposed_sl = close + stop_pts
+    if new_proposed_sl < active_sl
+        active_sl := new_proposed_sl
+        strategy.exit("Exit Short", from_entry = "Venda Pro", stop = active_sl, limit = active_tp)
 
-    if proposed_risk > syminfo.mintick
-        sl_price := proposed_sl
-        tp_price := close - proposed_risk * risk_reward
-        strategy.entry("Venda Pro", strategy.short, comment = "Venda WIN")
-        strategy.exit("Exit Short", from_entry = "Venda Pro", stop = sl_price, limit = tp_price)
-
-// Lógica de Breakeven Automático
-if strategy.position_size > 0 and use_breakeven
-    if high - strategy.position_avg_price >= be_trigger_pts
-        sl_price := math.max(sl_price, strategy.position_avg_price + 10)
-        strategy.exit("Exit Long", from_entry = "Compra Pro", stop = sl_price, limit = tp_price)
-
-if strategy.position_size < 0 and use_breakeven
-    if strategy.position_avg_price - low >= be_trigger_pts
-        sl_price := math.min(sl_price, strategy.position_avg_price - 10)
-        strategy.exit("Exit Short", from_entry = "Venda Pro", stop = sl_price, limit = tp_price)
-
-// =====================================================
-// 8. SAÍDA TÉCNICA PELA EMA WAVE (AJUSTADO)
-// =====================================================
-if strategy.position_size > 0 and close < emaWaveClose
-    strategy.close("Compra Pro", comment = "Saída Wave Close")
-
-if strategy.position_size < 0 and close > emaWaveClose
-    strategy.close("Venda Pro", comment = "Saída Wave Close")
+// Reseta variáveis se a posição zerar
+if strategy.position_size == 0
+    active_sl := na
+    active_tp := na
 
 // =====================================================
-// 9. PLOTS VISUAIS E BGCOLOR
+// 8. SAÍDA TÉCNICA CONFIRMADA PELA EMA WAVE (SEM FALSOS SAÍDAS)
+// =====================================================
+bool wave_close_below = close < emaWaveLow
+bool wave_close_above = close > emaWaveHigh
+
+// Exige que o fechamento fique fora da Wave durante X barras seguidas para confirmar
+bool confirmed_wave_exit_long = ta.barssince(not wave_close_below) >= wave_exit_confirm
+bool confirmed_wave_exit_short = ta.barssince(not wave_close_above) >= wave_exit_confirm
+
+if strategy.position_size > 0 and confirmed_wave_exit_long
+    strategy.close("Compra Pro", comment = "Saída Fim de Tendência")
+
+if strategy.position_size < 0 and confirmed_wave_exit_short
+    strategy.close("Venda Pro", comment = "Saída Fim de Tendência")
+
+// =====================================================
+// 9. PLOTS VISUAIS
 // =====================================================
 pHigh = plot(emaWaveHigh, color = color.new(color.green, 30), linewidth = 1, title = "Wave High")
 pClose = plot(emaWaveClose, color = color.new(color.gray, 50), linewidth = 1, title = "Wave Close")
@@ -138,7 +143,7 @@ pLow = plot(emaWaveLow, color = color.new(color.red, 30), linewidth = 1, title =
 fill(pHigh, pLow, color = color.new(color.blue, 92), title = "Canal Wave")
 
 plot(ema9, color = color.green, linewidth = 1, title = "EMA 9")
-plot(ema21, color = color.red, linewidth = 1, title = 'EMA 21')
+plot(ema21, color = color.red, linewidth = 1, title = "EMA 21")
 plot(ema80, color = color.yellow, linewidth = 2, title = "EMA 80")
 plot(ema200, color = color.orange, linewidth = 2, title = "EMA 200")
 
@@ -154,8 +159,11 @@ else
 
 bgcolor(bg_color, title = "Fundo ADX e Lateralização")
 
-plot(strategy.position_size != 0 ? sl_price : na, color = color.red, style = plot.style_linebr, linewidth = 2, title = "Stop Loss")
-plot(strategy.position_size != 0 ? tp_price : na, color = color.green, style = plot.style_linebr, linewidth= 2, title = "Take Profit")
+plot(strategy.position_size != 0 ? active_sl : na, color = color.red, style = plot.style_linebr, linewidth = 2, title = "Stop Loss Dinâmico")
+plot(strategy.position_size != 0 ? active_tp : na, color = color.green, style = plot.style_linebr, linewidth = 2, title = "Take Profit")
+
+plotshape(buy_trigger, title = "Sinal Compra", text = "COMPRA WIN", location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
+plotshape(sell_trigger, title = "Sinal Venda", text = "VENDA WIN", location = location.abovebar, style = shape.labeldown, size = size.small, color = color.red, textcolor = color.white)
 
 plotshape(new_long, title = "Sinal Compra", text = "COMPRA WIN", location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
 plotshape(new_short, title = "Sinal Venda", text = "VENDA WIN", location = location.abovebar, style = shape.labeldown, size = size.small, color = color.red, textcolor = color.white)
