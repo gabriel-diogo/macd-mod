@@ -1,19 +1,20 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=6
-strategy("Mini Índice Pro - Segurar até Stop/Alvo", shorttitle = "WIN_Pro_Hold", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
+strategy("Mini Índice Pro - Estratégia Revisada Completa", shorttitle = "WIN_Pro_Revisado", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
 
 // =====================================================
 // 1. HORÁRIO DE ENTRADA (B3)
 // =====================================================
 bool use_time_filter = input.bool(true, "Filtrar por horário de entrada", group = "Horário de Operação")
 string sessao = input.session("0915-1630", "Janela de Entradas (B3)", group = "Horário de Operação")
+
 bool in_session = not use_time_filter or not na(time(timeframe.period, sessao))
 
 // =====================================================
 // 2. TENDÊNCIA, MÉDIAS E EMA WAVE
 // =====================================================
 int wave_len = input.int(34, "Período EMA Wave", minval = 1, group = "Parâmetros de Tendência")
-int ema21_len = input.int(21, "EMA 21", minval = 1, group = "Parâmetros de Tendência")
+int ema50_len = input.int(50, "EMA 50", minval = 1, group = "Parâmetros de Tendência")
 int ema80_len = input.int(80, "EMA 80", minval = 1, group = "Parâmetros de Tendência")
 int ema_macro_len = input.int(200, "EMA 200", minval = 1, group = "Parâmetros de Tendência")
 
@@ -24,12 +25,13 @@ float emaWaveLow = ta.ema(low, wave_len)
 
 // Médias principais
 float ema9 = ta.ema(close, 9)
-float ema21 = ta.ema(close, ema21_len)
+float ema21 = ta.ema(close, 21)
+float ema50 = ta.ema(close, ema50_len)
 float ema80 = ta.ema(close, ema80_len)
 float ema200 = ta.ema(close, ema_macro_len)
 
-// Alinhamento exigido: Médias 21, 80 e 200 empilhadas para cima (21 > 80 > 200)
-bool alignment_bullish = ema21 > ema80 and ema80 > ema200
+// Alinhamento Macro Requerido: Preço > 50 > 80 > 200
+bool alignment_bullish = close > ema50 and ema50 > ema80 and ema80 > ema200
 
 // =====================================================
 // 3. ADX LOCAL
@@ -39,10 +41,39 @@ int adx_len = input.int(14, "Período ADX", minval = 1, group = "Filtro ADX")
 int adx_threshold = input.int(15, "ADX Mínimo", minval = 1, group = "Filtro ADX")
 
 [p_loc, m_loc, a_loc] = ta.dmi(adx_len, adx_len)
-bool adx_bull = not use_adx_filter or (a_loc >= adx_threshold and p_loc > m_loc)
+bool adx_bull = not use_adx_filter or a_loc >= adx_threshold and p_loc > m_loc
 
 // =====================================================
-// 4. FILTRO DE LATERALIZAÇÃO & BGCOLOR
+// 4. FILTRO E CRUZAMENTO DO MACD
+// =====================================================
+groupMACD = "Filtro MACD Zero"
+bool use_macd_zero_filter = input.bool(true, "Exigir MACD > 0", group = groupMACD)
+int macd_fast = input.int(12, "MACD Rápido", group = groupMACD)
+int macd_slow = input.int(26, "MACD Lento", group = groupMACD)
+int macd_signal = input.int(9, "MACD Sinal", group = groupMACD)
+
+[macd_line, signal_line, _] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Cruzamento das linhas do MACD para baixo (para saída técnica)
+bool macd_cross_down = ta.crossunder(macd_line, signal_line)
+
+// Validação do MACD acima da linha Zero
+bool macd_above_zero = not use_macd_zero_filter or (macd_line > 0)
+
+// =====================================================
+// 5. FILTRO HTF: EMA 9 NO GRÁFICO DE 4H (240m)
+// =====================================================
+group4H = "Filtro 4H EMA 9"
+bool use_4h_ema9_filter = input.bool(true, "Ativar Filtro EMA 9 do 4H", group = group4H)
+bool block_buy_if_4h_ema9_below = input.bool(true, "Bloquear Compra se EMA 9(4H) < Preço(4H)", group = group4H)
+
+float htf_4h_close = request.security(syminfo.tickerid, "240", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+float htf_4h_ema9  = request.security(syminfo.tickerid, "240", ta.ema(close, 9)[1], barmerge.gaps_off, barmerge.lookahead_on)
+
+bool htf_4h_condition_ok = not use_4h_ema9_filter or (block_buy_if_4h_ema9_below ? (htf_4h_ema9 >= htf_4h_close) : (htf_4h_ema9 < htf_4h_close))
+
+// =====================================================
+// 6. FILTRO DE LATERALIZAÇÃO
 // =====================================================
 bool use_consolidation_filter = input.bool(true, "Ativar Filtro de Lateralização", group = "Filtro de Lateralização")
 int consolidation_lookback = input.int(20, "Barras para Analisar", minval = 1, group = "Filtro de Lateralização")
@@ -54,43 +85,56 @@ bool enough_cross_data = bar_index >= consolidation_lookback
 bool is_consolidated = use_consolidation_filter and enough_cross_data and crosses_sum >= max_allowed_crosses
 
 // =====================================================
-// 5. GESTÃO DE RISCO (STOP 1000 PONTOS)
+// 7. GESTÃO DE RISCO (STOP FIXO 500 PONTOS)
 // =====================================================
 groupRisk = "Gestão de Risco & Stop"
-float stop_pts = input.float(1000.0, "Stop Loss Fixo (Pontos)", step = 50.0, group = groupRisk)
-float take_pts = input.float(2000.0, "Take Profit (Pontos)", step = 100.0, group = groupRisk)
+float stop_pts = input.float(500.0, "Stop Loss Fixo (Pontos)", step = 25.0, group = groupRisk)
+float take_pts = input.float(1000.0, "Take Profit (Pontos)", step = 50.0, group = groupRisk)
+int wave_exit_confirm = input.int(2, "Barras seguidas sob a Wave p/ Sair", minval = 1, group = groupRisk)
 
-float max_daily_loss_pts = input.float(2000.0, "Limite de Perda Diária (Pontos)", minval = 100.0, step = 50.0, group = groupRisk)
+float max_daily_loss_pts = input.float(1500.0, "Limite de Perda Diária (Pontos)", minval = 100.0, step = 50.0, group = groupRisk)
 strategy.risk.max_intraday_loss(max_daily_loss_pts, strategy.cash)
 
 // =====================================================
-// 6. GATILHOS DE ENTRADA (COMPRA)
+// 8. GATILHOS DE ENTRADA
 // =====================================================
 bool can_trade = not na(ema200) and in_session and not is_consolidated
 
 bool cross_buy = ta.crossover(ema9, ema21)
+bool acima_wave = close > emaWaveHigh
 
-// Requisitos: Alinhamento (21 > 80 > 200) + Preço > Wave High + ADX Verde + Cruzamento 9/21
-bool buy_trigger = can_trade and alignment_bullish and (close > emaWaveHigh) and adx_bull and cross_buy
+// Compra: Alinhamento (Preço > 50 > 80 > 200) + Acima da Wave + Cruzamento 9/21 + ADX + HTF + MACD > 0
+bool buy_trigger = can_trade and alignment_bullish and acima_wave and adx_bull and cross_buy and htf_4h_condition_ok and macd_above_zero
 
 // =====================================================
-// 7. EXECUÇÃO DE POSIÇÕES E GERENCIAMENTO DE STOP FIXO
+// 9. EXECUÇÃO DE POSIÇÕES E GERENCIAMENTO DE STOP
 // =====================================================
 var float active_sl = na
 var float active_tp = na
 
+// Nova Entrada na Compra
 if buy_trigger and strategy.position_size == 0
     active_sl := close - stop_pts
     active_tp := close + take_pts
     strategy.entry("Compra Pro", strategy.long, comment = "Compra WIN")
     strategy.exit("Exit Long", from_entry = "Compra Pro", stop = active_sl, limit = active_tp)
 
+// Reseta variáveis se a posição zerar
 if strategy.position_size == 0
     active_sl := na
     active_tp := na
 
 // =====================================================
-// 8. PLOTS VISUAIS E BGCOLOR
+// 10. SAÍDA TÉCNICA (PERDA DA WAVE OU CRUZAMENTO DO MACD)
+// =====================================================
+bool wave_close_below = close < emaWaveLow
+bool confirmed_wave_exit_long = ta.barssince(not wave_close_below) >= wave_exit_confirm
+
+if strategy.position_size > 0 and (confirmed_wave_exit_long or macd_cross_down)
+    strategy.close("Compra Pro", comment = "Saída Técnica (Wave/MACD)")
+
+// =====================================================
+// 11. PLOTS VISUAIS
 // =====================================================
 pHigh = plot(emaWaveHigh, color = color.new(color.green, 30), linewidth = 1, title = "Wave High")
 pClose = plot(emaWaveClose, color = color.new(color.gray, 50), linewidth = 1, title = "Wave Close")
@@ -99,6 +143,7 @@ fill(pHigh, pLow, color = color.new(color.blue, 92), title = "Canal Wave")
 
 plot(ema9, color = color.green, linewidth = 1, title = "EMA 9")
 plot(ema21, color = color.red, linewidth = 1, title = "EMA 21")
+plot(ema50, color = color.blue, linewidth = 1, title = "EMA 50")
 plot(ema80, color = color.yellow, linewidth = 2, title = "EMA 80")
 plot(ema200, color = color.orange, linewidth = 2, title = "EMA 200")
 
