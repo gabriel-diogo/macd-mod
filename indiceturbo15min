@@ -1,0 +1,151 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
+//@version=6
+strategy("Mini Índice Pro - Alerta Bandeira 4H", shorttitle = "WIN_Pro_Bandeira4H", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
+
+// =====================================================
+// 1. HORÁRIO DE ENTRADA (B3)
+// =====================================================
+bool use_time_filter = input.bool(true, "Filtrar por horário de entrada", group = "Horário de Operação")
+string sessao = input.session("0915-1630", "Janela de Entradas (B3)", group = "Horário de Operação")
+bool in_session = not use_time_filter or not na(time(timeframe.period, sessao))
+
+// =====================================================
+// 2. TENDÊNCIA, MÉDIAS E EMA WAVE
+// =====================================================
+int wave_len = input.int(34, "Período EMA Wave", minval = 1, group = "Parâmetros de Tendência")
+int ema50_len = input.int(50, "EMA 50", minval = 1, group = "Parâmetros de Tendência")
+int ema80_len = input.int(80, "EMA 80", minval = 1, group = "Parâmetros de Tendência")
+int ema_macro_len = input.int(200, "EMA 200", minval = 1, group = "Parâmetros de Tendência")
+
+// EMA Wave
+float emaWaveHigh = ta.ema(high, wave_len)
+float emaWaveClose = ta.ema(close, wave_len)
+float emaWaveLow = ta.ema(low, wave_len)
+
+// Médias principais
+float ema9 = ta.ema(close, 9)
+float ema21 = ta.ema(close, 21)
+float ema50 = ta.ema(close, ema50_len)
+float ema80 = ta.ema(close, ema80_len)
+float ema200 = ta.ema(close, ema_macro_len)
+
+bool alignment_bullish = close > ema50 and ema50 > ema80 and ema80 > ema200
+bool wave_above_ema50 = emaWaveClose > ema50 and not ta.crossunder(emaWaveClose, ema50)
+
+// =====================================================
+// 3. ADX LOCAL & ADX 4H (BANDEIRA)
+// =====================================================
+bool use_adx_filter = input.bool(true, "Ativar Filtro ADX", group = "Filtro ADX")
+int adx_len = input.int(14, "Período ADX", minval = 1, group = "Filtro ADX")
+int adx_threshold = input.int(15, "ADX Mínimo", minval = 1, group = "Filtro ADX")
+
+[p_loc, m_loc, a_loc] = ta.dmi(adx_len, adx_len)
+bool adx_bull = not use_adx_filter or a_loc >= adx_threshold and p_loc > m_loc
+
+// --- ANÁLISE DE 4H PARA O ALERTA BANDEIRA ---
+group4H = "Alerta Bandeira 4H"
+bool use_4h_flag = input.bool(true, "Ativar Alerta Bandeira 4H", group = group4H)
+
+// Solicitando dados do 4H (240 minutos) de forma segura
+float htf_4h_close = request.security(syminfo.tickerid, "240", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+float htf_4h_ema50 = request.security(syminfo.tickerid, "240", ta.ema(close, 50)[1], barmerge.gaps_off, barmerge.lookahead_on)
+float htf_4h_ema200 = request.security(syminfo.tickerid, "240", ta.ema(close, 200)[1], barmerge.gaps_off, barmerge.lookahead_on)
+[htf_p_di, htf_m_di, htf_adx] = request.security(syminfo.tickerid, "240", ta.dmi(14, 14), barmerge.gaps_off, barmerge.lookahead_on)
+
+// Condição da Bandeira 4H: ADX verde (forte alta) + Preço acima da 50 e 200 no 4H
+bool htf_adx_bull = htf_adx >= adx_threshold and htf_p_di > htf_m_di
+bool htf_bull_trend = htf_4h_close > htf_4h_ema50 and htf_4h_ema50 > htf_4h_ema200
+
+bool flag_4h_alert = use_4h_flag and htf_adx_bull and htf_bull_trend
+
+// =====================================================
+// 4. FILTRO DE LATERALIZAÇÃO
+// =====================================================
+bool use_consolidation_filter = input.bool(true, "Ativar Filtro de Lateralização", group = "Filtro de Lateralização")
+int consolidation_lookback = input.int(20, "Barras para Analisar", minval = 1, group = "Filtro de Lateralização")
+int max_allowed_crosses = input.int(4, "Limite de Cruzamentos (9/21)", minval = 1, group = "Filtro de Lateralização")
+
+bool ema_crossed_now = ta.cross(ema9, ema21)
+float crosses_sum = math.sum(ema_crossed_now ? 1.0 : 0.0, consolidation_lookback)
+bool enough_cross_data = bar_index >= consolidation_lookback
+bool is_consolidated = use_consolidation_filter and enough_cross_data and crosses_sum >= max_allowed_crosses
+
+// =====================================================
+// 5. GESTÃO DE RISCO (STOP FIXO 500 PONTOS)
+// =====================================================
+groupRisk = "Gestão de Risco & Stop"
+float stop_pts = input.float(500.0, "Stop Loss Fixo (Pontos)", step = 25.0, group = groupRisk)
+float take_pts = input.float(1000.0, "Take Profit (Pontos)", step = 50.0, group = groupRisk)
+int wave_exit_confirm = input.int(2, "Barras seguidas sob a Wave p/ Sair", minval = 1, group = groupRisk)
+
+float max_daily_loss_pts = input.float(1500.0, "Limite de Perda Diária (Pontos)", minval = 100.0, step = 50.0, group = groupRisk)
+strategy.risk.max_intraday_loss(max_daily_loss_pts, strategy.cash)
+
+// =====================================================
+// 6. GATILHOS DE ENTRADA
+// =====================================================
+bool can_trade = not na(ema200) and in_session and not is_consolidated
+
+bool cross_buy = ta.crossover(ema9, ema21)
+bool acima_wave = close > emaWaveHigh
+
+bool buy_trigger = can_trade and alignment_bullish and wave_above_ema50 and acima_wave and adx_bull and cross_buy
+
+// =====================================================
+// 7. EXECUÇÃO DE POSIÇÕES E GERENCIAMENTO DE STOP
+// =====================================================
+var float active_sl = na
+var float active_tp = na
+
+if buy_trigger and strategy.position_size == 0
+    active_sl := close - stop_pts
+    active_tp := close + take_pts
+    strategy.entry("Compra Pro", strategy.long, comment = "Compra WIN")
+    strategy.exit("Exit Long", from_entry = "Compra Pro", stop = active_sl, limit = active_tp)
+
+if strategy.position_size == 0
+    active_sl := na
+    active_tp := na
+
+// =====================================================
+// 8. SAÍDA TÉCNICA
+// =====================================================
+bool wave_close_below = close < emaWaveLow
+bool confirmed_wave_exit_long = ta.barssince(not wave_close_below) >= wave_exit_confirm
+[macd_line, signal_line, _] = ta.macd(close, 12, 26, 9)
+bool macd_cross_down = ta.crossunder(macd_line, signal_line)
+if strategy.position_size > 0 and (confirmed_wave_exit_long or macd_cross_down)
+    strategy.close("Compra Pro", comment = "Saída Técnica (Wave/MACD)")
+
+// =====================================================
+// 9. PLOTS VISUAIS E ALERTAS DE BANDEIRA
+// =====================================================
+pHigh = plot(emaWaveHigh, color = color.new(color.green, 30), linewidth = 1, title = "Wave High")
+pClose = plot(emaWaveClose, color = color.new(color.gray, 50), linewidth = 1, title = "Wave Close")
+pLow = plot(emaWaveLow, color = color.new(color.red, 30), linewidth = 1, title = "Wave Low")
+fill(pHigh, pLow, color = color.new(color.blue, 92), title = "Canal Wave")
+
+plot(ema9, color = color.green, linewidth = 1, title = "EMA 9")
+plot(ema21, color = color.red, linewidth = 1, title = "EMA 21")
+plot(ema50, color = color.blue, linewidth = 1, title = "EMA 50")
+plot(ema80, color = color.yellow, linewidth = 2, title = "EMA 80")
+plot(ema200, color = color.orange, linewidth = 2, title = "EMA 200")
+
+color bg_color = na
+if is_consolidated
+    bg_color := color.new(color.orange, 88)
+else if adx_bull
+    bg_color := color.new(color.green, 92)
+else
+    bg_color := color.new(color.gray, 96)
+
+bgcolor(bg_color, title = "Fundo ADX e Lateralização")
+
+plot(strategy.position_size != 0 ? active_sl : na, color = color.red, style = plot.style_linebr, linewidth = 2, title = "Stop Loss Fixo")
+plot(strategy.position_size != 0 ? active_tp : na, color = color.green, style = plot.style_linebr, linewidth = 2, title = "Take Profit")
+
+plotshape(buy_trigger, title = "Sinal Compra", text = "COMPRA WIN", location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
+
+// Alerta Visual e Nativo de Bandeira no 4H
+plotshape(flag_4h_alert, title = "Alerta Bandeira 4H", text = "BANDEIRA 4H", location = location.top, style = shape.flag, size = size.normal, color = color.navy, textcolor = color.white)
+alertcondition(flag_4h_alert, title = "Alerta: Bandeira 4H Ativa", message = "O gráfico de 4H está em forte tendência de alta (ADX Verde com médias alinhadas acima de 50 e 200)!")
