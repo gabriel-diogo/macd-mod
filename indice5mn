@@ -1,13 +1,25 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=6
-strategy("Mini Índice Pro - Wave 80 + Bloqueio Dentro da Wave", shorttitle = "WIN_Wave80_ForaWave", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
+strategy("Mini Índice Pro - Day Trade Blindado", shorttitle = "WIN_DayTrade_Rigido", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
 
 // =====================================================
-// 1. HORÁRIO DE ENTRADA (B3)
+// 1. HORÁRIO DE ENTRADA E ZERAGEM (B3: 09:15 - 16:15)
 // =====================================================
 bool use_time_filter = input.bool(true, "Filtrar por horário de entrada", group = "Horário de Operação")
-string sessao = input.session("0915-1630", "Janela de Entradas (B3)", group = "Horário de Operação")
-bool in_session = not use_time_filter or not na(time(timeframe.period, sessao))
+int start_hour = input.int(9, "Hora Início", minval=0, maxval=23, group = "Horário de Operação")
+int start_minute = input.int(15, "Minuto Início", minval=0, maxval=59, group = "Horário de Operação")
+int end_hour = input.int(16, "Hora Fim (Limite Entradas)", minval=0, maxval=23, group = "Horário de Operação")
+int end_minute = input.int(15, "Minuto Fim (Limite Entradas)", minval=0, maxval=59, group = "Horário de Operação")
+
+int current_time_in_minutes = hour(time, "America/Sao_Paulo") * 60 + minute(time, "America/Sao_Paulo")
+int start_time_in_minutes = start_hour * 60 + start_minute
+int end_time_in_minutes = end_hour * 60 + end_minute
+
+// Janela estrita de funcionamento da B3 para entradas
+bool in_session = not use_time_filter or (current_time_in_minutes >= start_time_in_minutes and current_time_in_minutes <= end_time_in_minutes)
+
+// Horário limite para zerar tudo e ir para casa (16:30)
+bool time_to_close = (hour(time, "America/Sao_Paulo") * 60 + minute(time, "America/Sao_Paulo")) >= (16 * 60 + 30)
 
 // =====================================================
 // 2. TENDÊNCIA, MÉDIAS E EMA WAVE
@@ -16,12 +28,10 @@ int wave_len = input.int(34, "Período EMA Wave", minval = 1, group = "Parâmetr
 int ema80_len = input.int(80, "EMA 80", minval = 1, group = "Parâmetros de Tendência")
 int ema200_len = input.int(200, "EMA 200 (Macro)", minval = 1, group = "Parâmetros de Tendência")
 
-// EMA Wave (Canal)
 float emaWaveHigh = ta.ema(high, wave_len)
 float emaWaveClose = ta.ema(close, wave_len)
 float emaWaveLow = ta.ema(low, wave_len)
 
-// Médias principais
 float ema9 = ta.ema(close, 9)
 float ema21 = ta.ema(close, 21)
 float ema80 = ta.ema(close, ema80_len)
@@ -30,16 +40,16 @@ float ema200 = ta.ema(close, ema200_len)
 // =====================================================
 // 3. REGRA DE BLOQUEIO: DENTRO DA WAVE
 // =====================================================
-// Verifica se o preço está comprimido/preso dentro da faixa High e Low da Wave
 bool inside_wave = close >= emaWaveLow and close <= emaWaveHigh
 bool price_above_wave = close > emaWaveHigh
 
 // =====================================================
 // 4. FILTRO DE LATERALIZAÇÃO
 // =====================================================
-bool use_consolidation_filter = input.bool(true, "Ativar Filtro de Lateralização", group = "Filtro de Lateralização")
-int consolidation_lookback = input.int(20, "Barras para Analisar", minval = 1, group = "Filtro de Lateralização")
-int max_allowed_crosses = input.int(4, "Limite de Cruzamentos (9/21)", minval = 1, group = "Filtro de Lateralização")
+groupConsol = "Filtro de Lateralização"
+bool use_consolidation_filter = input.bool(true, "Ativar Filtro de Lateralização", group = groupConsol)
+int consolidation_lookback = input.int(20, "Barras para Analisar", minval = 1, group = groupConsol)
+int max_allowed_crosses = input.int(4, "Limite de Cruzamentos (9/21)", minval = 1, group = groupConsol)
 
 bool ema_crossed_now = ta.cross(ema9, ema21)
 float crosses_sum = math.sum(ema_crossed_now ? 1.0 : 0.0, consolidation_lookback)
@@ -47,38 +57,36 @@ bool enough_cross_data = bar_index >= consolidation_lookback
 bool is_consolidated = use_consolidation_filter and enough_cross_data and crosses_sum >= max_allowed_crosses
 
 // =====================================================
-// 5. GESTÃO DE RISCO (STOP 1000 PONTOS)
+// 5. GESTÃO DE RISCO (DAY TRADE: STOP 400 / ALVO 1000)
 // =====================================================
-groupRisk = "Gestão de Risco & Stop"
-float stop_pts = input.float(1000.0, "Stop Loss Fixo (Pontos)", step = 50.0, group = groupRisk)
-float take_pts = input.float(2000.0, "Take Profit (Pontos)", step = 100.0, group = groupRisk)
+groupRisk = "Gestão de Risco & Stop (Day Trade)"
+float stop_pts = input.float(400.0, "Stop Loss Fixo (Pontos)", step = 50.0, group = groupRisk)
+float take_pts = input.float(1000.0, "Take Profit (Pontos)", step = 50.0, group = groupRisk)
 
-float max_daily_loss_pts = input.float(2000.0, "Limite de Perda Diária (Pontos)", minval = 100.0, step = 50.0, group = groupRisk)
+float max_daily_loss_pts = input.float(1500.0, "Limite de Perda Diária (Pontos)", minval = 100.0, step = 50.0, group = groupRisk)
 strategy.risk.max_intraday_loss(max_daily_loss_pts, strategy.cash)
 
 // =====================================================
 // 6. GATILHOS DE ENTRADA (COMPRA)
 // =====================================================
 bool cross_wave_80 = ta.crossover(emaWaveClose, ema80)
-
-// A compra só é acionada se:
-// 1. Estiver na janela de horário (B3)
-// 2. Não estiver em região de lateralização
-// 3. Houver o cruzamento da Wave com a 80
-// 4. O preço estiver fora (ACIMA) da Wave (bloqueia se estiver dentro)
 bool buy_trigger = in_session and not is_consolidated and cross_wave_80 and price_above_wave and not inside_wave
 
 // =====================================================
-// 7. EXECUÇÃO DE POSIÇÕES E GERENCIAMENTO DE STOP FIXO
+// 7. EXECUÇÃO DE POSIÇÕES E ZERAGEM NO FIM DO DIA
 // =====================================================
 var float active_sl = na
 var float active_tp = na
 
-if buy_trigger and strategy.position_size == 0
+if buy_trigger and strategy.position_size == 0 and not time_to_close
     active_sl := close - stop_pts
     active_tp := close + take_pts
-    strategy.entry("Compra Pro", strategy.long, comment = "Compra Wave/80")
-    strategy.exit("Exit Long", from_entry = "Compra Pro", stop = active_sl, limit = active_tp)
+    strategy.entry("Compra DT", strategy.long, comment = "Compra DayTrade")
+    strategy.exit("Exit Long", from_entry = "Compra DT", stop = active_sl, limit = active_tp)
+
+// Força o encerramento absoluto da posição às 16:30
+if time_to_close and strategy.position_size != 0
+    strategy.close_all(comment = "Fim do Pregão (DT)")
 
 if strategy.position_size == 0
     active_sl := na
@@ -97,11 +105,13 @@ plot(ema21, color = color.red, linewidth = 1, title = "EMA 21")
 plot(ema80, color = color.yellow, linewidth = 2, title = "EMA 80")
 plot(ema200, color = color.orange, linewidth = 3, title = "EMA 200 (Macro)")
 
-// Fundo do gráfico: Destaca em laranja se lateralizado
 color bg_color = is_consolidated ? color.new(color.orange, 88) : color.new(color.gray, 96)
 bgcolor(bg_color, title = "Fundo Lateralização")
 
 plot(strategy.position_size != 0 ? active_sl : na, color = color.red, style = plot.style_linebr, linewidth = 2, title = "Stop Loss Fixo")
+plot(strategy.position_size != 0 ? active_tp : na, color = color.green, style = plot.style_linebr, linewidth = 2, title = "Take Profit")
+
+plotshape(buy_trigger, title = "Sinal Compra", text = "COMPRA DT", location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
 plot(strategy.position_size != 0 ? active_tp : na, color = color.green, style = plot.style_linebr, linewidth = 2, title = "Take Profit")
 
 plotshape(buy_trigger, title = "Sinal Compra", text = "COMPRA WAVE/80", location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
