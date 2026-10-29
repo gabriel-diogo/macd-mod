@@ -1,6 +1,6 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=6
-strategy("Mini Índice Pro - Day Trade Blindado + ADX", shorttitle = "WIN_DayTrade_ADX", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
+strategy("Mini Índice Pro - Região de Compra (Stop 500p)", shorttitle = "WIN_Regiao_Compra", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
 
 // =====================================================
 // 1. HORÁRIO DE ENTRADA E ZERAGEM (B3: 09:15 - 16:15)
@@ -15,10 +15,7 @@ int current_time_in_minutes = hour(time, "America/Sao_Paulo") * 60 + minute(time
 int start_time_in_minutes = start_hour * 60 + start_minute
 int end_time_in_minutes = end_hour * 60 + end_minute
 
-// Janela estrita de funcionamento da B3 para entradas
 bool in_session = not use_time_filter or (current_time_in_minutes >= start_time_in_minutes and current_time_in_minutes <= end_time_in_minutes)
-
-// Horário limite para zerar tudo e ir para casa (16:30)
 bool time_to_close = (hour(time, "America/Sao_Paulo") * 60 + minute(time, "America/Sao_Paulo")) >= (16 * 60 + 30)
 
 // =====================================================
@@ -32,8 +29,8 @@ float emaWaveHigh = ta.ema(high, wave_len)
 float emaWaveClose = ta.ema(close, wave_len)
 float emaWaveLow = ta.ema(low, wave_len)
 
-float ema9 = ta.ema(close, 9)
-float ema21 = ta.ema(close, 21)
+float ema9 = ta.ema(close, 13)
+float ema21 = ta.ema(close, 26)
 float ema80 = ta.ema(close, ema80_len)
 float ema200 = ta.ema(close, ema200_len)
 
@@ -65,10 +62,10 @@ int adx_threshold = input.int(15, "ADX Mínimo", minval = 1, group = groupConsol
 bool adx_bull = not use_adx_filter or (a_loc >= adx_threshold and p_loc > m_loc)
 
 // =====================================================
-// 5. GESTÃO DE RISCO (DAY TRADE: STOP 400 / ALVO 1000)
+// 5. GESTÃO DE RISCO (DAY TRADE: STOP 500 / ALVO 1000)
 // =====================================================
 groupRisk = "Gestão de Risco & Stop (Day Trade)"
-float stop_pts = input.float(400.0, "Stop Loss Fixo (Pontos)", step = 50.0, group = groupRisk)
+float stop_pts = input.float(500.0, "Stop Loss Fixo (Pontos)", step = 50.0, group = groupRisk)
 float take_pts = input.float(1000.0, "Take Profit (Pontos)", step = 100.0, group = groupRisk)
 
 float max_daily_loss_pts = input.float(1500.0, "Limite de Perda Diária (Pontos)", minval = 100.0, step = 50.0, group = groupRisk)
@@ -92,7 +89,6 @@ if buy_trigger and strategy.position_size == 0 and not time_to_close
     strategy.entry("Compra DT", strategy.long, comment = "Compra DayTrade")
     strategy.exit("Exit Long", from_entry = "Compra DT", stop = active_sl, limit = active_tp)
 
-// Força o encerramento absoluto da posição às 16:30
 if time_to_close and strategy.position_size != 0
     strategy.close_all(comment = "Fim do Pregão (DT)")
 
@@ -101,30 +97,33 @@ if strategy.position_size == 0
     active_tp := na
 
 // =====================================================
-// 8. PLOTS VISUAIS
+// 8. PLOTS VISUAIS E MARCAÇÃO DE REGIÃO (BOX DE RISCO)
 // =====================================================
 pHigh = plot(emaWaveHigh, color = color.new(color.green, 30), linewidth = 1, title = "Wave High")
 pClose = plot(emaWaveClose, color = color.new(color.gray, 50), linewidth = 1, title = "Wave Close")
 pLow = plot(emaWaveLow, color = color.new(color.red, 30), linewidth = 1, title = "Wave Low")
 fill(pHigh, pLow, color = color.new(color.blue, 92), title = "Canal Wave")
 
-plot(ema9, color = color.green, linewidth = 1, title = "EMA 9")
-plot(ema21, color = color.red, linewidth = 1, title = "EMA 21")
+plot(ema9, color = color.green, linewidth = 1, title = "EMA 13")
+plot(ema21, color = color.red, linewidth = 1, title = "EMA 26")
 plot(ema80, color = color.yellow, linewidth = 2, title = "EMA 80")
 plot(ema200, color = color.orange, linewidth = 3, title = "EMA 200 (Macro)")
 
-// Definição da cor do fundo: Laranja se lateralizado, Verde se ADX forte/favorável, Cinza caso contrário
-color bg_color = na
-if is_consolidated
-    bg_color := color.new(color.orange, 88)
-else if adx_bull
-    bg_color := color.new(color.green, 92)
-else
-    bg_color := color.new(color.gray, 96)
-
+color bg_color = is_consolidated ? color.new(color.orange, 88) : (adx_bull ? color.new(color.green, 92) : color.new(color.gray, 96))
 bgcolor(bg_color, title = "Fundo ADX e Lateralização")
 
 plot(strategy.position_size != 0 ? active_sl : na, color = color.red, style = plot.style_linebr, linewidth = 2, title = "Stop Loss Fixo")
 plot(strategy.position_size != 0 ? active_tp : na, color = color.new(color.green, 0), style = plot.style_linebr, linewidth = 2, title = "Take Profit")
 
 plotshape(buy_trigger, title = "Sinal Compra", text = "COMPRA DT", location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
+
+// --- DESENHA UMA CAIXA (REGIÃO) DO PONTO DE ENTRADA ATÉ O STOP DE 500 PONTOS ---
+if buy_trigger
+    // Cria uma caixa destacando a zona de risco de 500 pontos a partir da barra de entrada
+    box.new(left = bar_index, top = close, right = bar_index + 4, bottom = close - stop_pts, 
+            bgcolor = color.new(color.red, 85), 
+            border_color = color.red, 
+            border_style = line.style_dashed, 
+            text = "Zona Stop 500p", 
+            text_color = color.white, 
+            text_size = size.small)
