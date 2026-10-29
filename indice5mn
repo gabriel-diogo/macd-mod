@@ -1,6 +1,6 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=6
-strategy("Mini Índice Pro - Região de Compra (Stop 500p)", shorttitle = "WIN_Regiao_Compra", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
+strategy("Mini Índice Pro - Região de Compra Blindada", shorttitle = "WIN_Filtro_Esticado", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
 
 // =====================================================
 // 1. HORÁRIO DE ENTRADA E ZERAGEM (B3: 09:15 - 16:15)
@@ -35,25 +35,34 @@ float ema80 = ta.ema(close, ema80_len)
 float ema200 = ta.ema(close, ema200_len)
 
 // =====================================================
-// 3. REGRA DE BLOQUEIO: DENTRO DA WAVE
+// 3. FILTROS ANTI-SOBRECOMPRA / PREÇO ESTICADO
+// =====================================================
+groupStretched = "Filtro Anti-Preço Esticado"
+bool use_rsi_filter = input.bool(true, "Ativar Filtro RSI Max", group = groupStretched)
+int rsi_max_allowed = input.int(65, "RSI Máximo para Compra", minval = 50, maxval = 90, group = groupStretched)
+float rsi_val = ta.rsi(close, 14)
+bool rsi_ok = not use_rsi_filter or (rsi_val <= rsi_max_allowed)
+
+bool use_dist_filter = input.bool(true, "Ativar Filtro Distância EMA 80", group = groupStretched)
+float max_dist_pts = input.float(350.0, "Distância Máxima da EMA 80 (Pts)", minval = 50.0, step = 25.0, group = groupStretched)
+float current_dist_ema80 = math.abs(close - ema80)
+bool dist_ok = not use_dist_filter or (current_dist_ema80 <= max_dist_pts)
+
+// =====================================================
+// 4. REGRA DE BLOQUEIO & LATERALIZAÇÃO
 // =====================================================
 bool inside_wave = close >= emaWaveLow and close <= emaWaveHigh
 bool price_above_wave = close > emaWaveHigh
 
-// =====================================================
-// 4. FILTRO DE LATERALIZAÇÃO E ADX
-// =====================================================
 groupConsol = "Filtro de Lateralização & ADX"
 bool use_consolidation_filter = input.bool(true, "Ativar Filtro de Lateralização", group = groupConsol)
 int consolidation_lookback = input.int(20, "Barras para Analisar", minval = 1, group = groupConsol)
-int max_allowed_crosses = input.int(4, "Limite de Cruzamentos (9/21)", minval = 1, group = groupConsol)
+int max_allowed_crosses = input.int(4, "Limite de Cruzamentos", minval = 1, group = groupConsol)
 
 bool ema_crossed_now = ta.cross(ema9, ema21)
 float crosses_sum = math.sum(ema_crossed_now ? 1.0 : 0.0, consolidation_lookback)
-bool enough_cross_data = bar_index >= consolidation_lookback
-bool is_consolidated = use_consolidation_filter and enough_cross_data and crosses_sum >= max_allowed_crosses
+bool is_consolidated = use_consolidation_filter and (bar_index >= consolidation_lookback) and (crosses_sum >= max_allowed_crosses)
 
-// Configuração do Filtro ADX
 bool use_adx_filter = input.bool(true, "Ativar Filtro ADX", group = groupConsol)
 int adx_len = input.int(14, "Período ADX", minval = 1, group = groupConsol)
 int adx_threshold = input.int(15, "ADX Mínimo", minval = 1, group = groupConsol)
@@ -62,9 +71,9 @@ int adx_threshold = input.int(15, "ADX Mínimo", minval = 1, group = groupConsol
 bool adx_bull = not use_adx_filter or (a_loc >= adx_threshold and p_loc > m_loc)
 
 // =====================================================
-// 5. GESTÃO DE RISCO (DAY TRADE: STOP 500 / ALVO 1000)
+// 5. GESTÃO DE RISCO (DAY TRADE)
 // =====================================================
-groupRisk = "Gestão de Risco & Stop (Day Trade)"
+groupRisk = "Gestão de Risco & Stop"
 float stop_pts = input.float(500.0, "Stop Loss Fixo (Pontos)", step = 50.0, group = groupRisk)
 float take_pts = input.float(1000.0, "Take Profit (Pontos)", step = 100.0, group = groupRisk)
 
@@ -72,13 +81,13 @@ float max_daily_loss_pts = input.float(1500.0, "Limite de Perda Diária (Pontos)
 strategy.risk.max_intraday_loss(max_daily_loss_pts, strategy.cash)
 
 // =====================================================
-// 6. GATILHOS DE ENTRADA (COMPRA)
+// 6. GATILHOS DE ENTRADA (COMPRA RESTRITA)
 // =====================================================
 bool cross_wave_80 = ta.crossover(emaWaveClose, ema80)
-bool buy_trigger = in_session and not is_consolidated and adx_bull and cross_wave_80 and price_above_wave and not inside_wave
+bool buy_trigger = in_session and not is_consolidated and adx_bull and cross_wave_80 and price_above_wave and not inside_wave and rsi_ok and dist_ok
 
 // =====================================================
-// 7. EXECUÇÃO DE POSIÇÕES E ZERAGEM NO FIM DO DIA
+// 7. EXECUÇÃO DE POSIÇÕES
 // =====================================================
 var float active_sl = na
 var float active_tp = na
@@ -86,7 +95,7 @@ var float active_tp = na
 if buy_trigger and strategy.position_size == 0 and not time_to_close
     active_sl := close - stop_pts
     active_tp := close + take_pts
-    strategy.entry("Compra DT", strategy.long, comment = "Compra DayTrade")
+    strategy.entry("Compra DT", strategy.long, comment = "Compra Protegida")
     strategy.exit("Exit Long", from_entry = "Compra DT", stop = active_sl, limit = active_tp)
 
 if time_to_close and strategy.position_size != 0
@@ -97,7 +106,7 @@ if strategy.position_size == 0
     active_tp := na
 
 // =====================================================
-// 8. PLOTS VISUAIS E MARCAÇÃO DE REGIÃO (BOX DE RISCO)
+// 8. PLOTS VISUAIS E REGIÃO DE RISCO
 // =====================================================
 pHigh = plot(emaWaveHigh, color = color.new(color.green, 30), linewidth = 1, title = "Wave High")
 pClose = plot(emaWaveClose, color = color.new(color.gray, 50), linewidth = 1, title = "Wave Close")
@@ -117,9 +126,7 @@ plot(strategy.position_size != 0 ? active_tp : na, color = color.new(color.green
 
 plotshape(buy_trigger, title = "Sinal Compra", text = "COMPRA DT", location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
 
-// --- DESENHA UMA CAIXA (REGIÃO) DO PONTO DE ENTRADA ATÉ O STOP DE 500 PONTOS ---
 if buy_trigger
-    // Cria uma caixa destacando a zona de risco de 500 pontos a partir da barra de entrada
     box.new(left = bar_index, top = close, right = bar_index + 4, bottom = close - stop_pts, 
             bgcolor = color.new(color.red, 85), 
             border_color = color.red, 
