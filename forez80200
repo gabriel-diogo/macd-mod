@@ -1,0 +1,132 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
+//@version=6
+strategy("Forex Pro - Compra 80/200 (Fundo ADX Dinâmico)", shorttitle = "FX_80_200_BgADX", overlay = true, initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
+
+// =====================================================
+// 1. HORÁRIO DE ENTRADA (SESSÃO FOREX EM UTC)
+// =====================================================
+bool use_time_filter = input.bool(true, "Filtrar por Horário (Sessão)", group = "Horário de Operação")
+int start_hour = input.int(3, "Hora Início (Londres/NY)", minval=0, maxval=23, group = "Horário de Operação")
+int start_minute = input.int(0, "Minuto Início", minval=0, maxval=59, group = "Horário de Operação")
+int end_hour = input.int(17, "Hora Fim", minval=0, maxval=23, group = "Horário de Operação")
+int end_minute = input.int(0, "Minuto Fim", minval=0, maxval=59, group = "Horário de Operação")
+
+int current_time_in_minutes = hour(time, "UTC") * 60 + minute(time, "UTC")
+int start_time_in_minutes = start_hour * 60 + start_minute
+int end_time_in_minutes = end_hour * 60 + end_minute
+
+bool in_session = not use_time_filter or (current_time_in_minutes >= start_time_in_minutes and current_time_in_minutes <= end_time_in_minutes)
+
+// =====================================================
+// 2. MÉDIAS MÓVEIS (9, 21, 80, 200)
+// =====================================================
+float ema9 = ta.ema(close, 9)
+float ema21 = ta.ema(close, 21)
+float ema80 = ta.ema(close, 80)
+float ema200 = ta.ema(close, 200)
+
+// =====================================================
+// 3. FILTROS DE PROTEÇÃO (MACD & ADX VERDE)
+// =====================================================
+groupFilters = "Filtros de Proteção"
+bool use_macd_filter = input.bool(true, "Ativar Filtro MACD > 0", group = groupFilters)
+[macd_line, signal_line, hist_line] = ta.macd(close, 12, 26, 9)
+bool macd_ok = not use_macd_filter or (macd_line > 0.0)
+
+bool use_adx_filter = input.bool(true, "Ativar Filtro ADX Verde", group = groupFilters)
+int adx_len = input.int(14, "Período ADX", minval = 1, group = groupFilters)
+int adx_threshold = input.int(15, "ADX Mínimo", minval = 1, group = groupFilters)
+
+[p_loc, m_loc, a_loc] = ta.dmi(adx_len, adx_len)
+
+// ADX VERDE: DI+ (p_loc) maior que DI- (m_loc) e valor do ADX acima do limite mínimo
+bool adx_green = not use_adx_filter or (a_loc >= adx_threshold and p_loc > m_loc)
+
+// =====================================================
+// 4. FILTRO DE CONSOLIDAÇÃO (CRUZAMENTOS 9/21)
+// =====================================================
+groupConsol = "Filtro de Lateralização"
+bool use_consolidation_filter = input.bool(true, "Ativar Filtro de Lateralização", group = groupConsol)
+int consolidation_lookback = input.int(20, "Barras para Analisar", minval = 1, group = groupConsol)
+int max_allowed_crosses = input.int(4, "Limite de Cruzamentos (9/21)", minval = 1, group = groupConsol)
+
+bool ema_crossed_now = ta.cross(ema9, ema21)
+float crosses_sum = math.sum(ema_crossed_now ? 1.0 : 0.0, consolidation_lookback)
+bool is_consolidated = use_consolidation_filter and (bar_index >= consolidation_lookback) and (crosses_sum >= max_allowed_crosses)
+
+// =====================================================
+// 5. GESTÃO DE RISCO EM PIPS (FOREX)
+// =====================================================
+groupRisk = "Gestão de Risco (Pips)"
+float stop_pips = input.float(30.0, "Stop Loss (Pips)", step = 5.0, group = groupRisk)
+float take_pips = input.float(75.0, "Take Profit (Pips)", step = 5.0, group = groupRisk)
+
+float pip_value = syminfo.mintick * (syminfo.type == "forex" and str.contains(syminfo.tickerid, "JPY") ? 100 : 10)
+float stop_distance = stop_pips * pip_value
+float take_distance = take_pips * pip_value
+
+// =====================================================
+// 6. GATILHOS DE ENTRADA E SAÍDA FORÇADA
+// =====================================================
+bool cross_80_200 = ta.crossover(ema80, ema200)
+bool buy_trigger = in_session and not is_consolidated and adx_green and cross_80_200 and macd_ok
+
+bool close_below_ema80 = close < ema80
+
+// =====================================================
+// 7. EXECUÇÃO DE POSIÇÕES
+// =====================================================
+var float active_sl = na
+var float active_tp = na
+
+if strategy.position_size > 0 and close_below_ema80
+    strategy.close("Buy FX", comment = "Saiu Abaixo EMA 80")
+    active_sl := na
+    active_tp := na
+
+if buy_trigger and strategy.position_size == 0
+    active_sl := close - stop_distance
+    active_tp := close + take_distance
+    strategy.entry("Buy FX", strategy.long, comment = "Buy 80/200 ADX Verde")
+    strategy.exit("Exit Long", from_entry = "Buy FX", stop = active_sl, limit = active_tp)
+
+if strategy.position_size == 0
+    active_sl := na
+    active_tp := na
+
+// =====================================================
+// 8. PLOTS VISUAIS E COR DE FUNDO DINÂMICA
+// =====================================================
+plot(ema9, color = color.green, linewidth = 1, title = "EMA 9")
+plot(ema21, color = color.red, linewidth = 1, title = "EMA 21")
+plot(ema80, color = color.yellow, linewidth = 2, title = "EMA 80")
+plot(ema200, color = color.orange, linewidth = 3, title = "EMA 200 (Macro)")
+
+// Fundo muda de cor com base no estado do ADX e Consolidação
+color bg_color = is_consolidated ? color.new(color.orange, 88) : (use_adx_filter ? (p_loc > m_loc ? color.new(color.green, 92) : color.new(color.red, 92)) : color.new(color.gray, 96))
+bgcolor(bg_color, title = "Fundo Dinâmico (ADX e Lateralização)")
+
+plot(strategy.position_size != 0 ? active_sl : na, color = color.red, style = plot.style_linebr, linewidth = 2, title = "Stop Loss")
+plot(strategy.position_size != 0 ? active_tp : na, color = color.green, style = plot.style_linebr, linewidth = 2, title = "Take Profit")
+
+plotshape(buy_trigger, title = "Sinal Compra", text = "BUY", location = location.belowbar, style = shape.labelup, size = size.small, color = color.green, textcolor = color.white)
+
+
+
+// Período da Wave
+wave_len = input.int(34, "Período EMA Wave", minval=1)
+
+emaWaveHigh = ta.ema(high, wave_len)
+emaWaveClose = ta.ema(close, wave_len)
+emaWaveLow = ta.ema(low, wave_len)
+
+pHigh = plot(emaWaveHigh, color=color.new(color.green, 20), linewidth=2, title="Wave High")
+pClose = plot(emaWaveClose, color=color.new(color.gray, 40), linewidth=1, title="Wave Close")
+pLow = plot(emaWaveLow, color=color.new(color.red, 20), linewidth=2, title="Wave Low")
+
+// Preenche o canal igual da sua foto
+fill(pHigh, pLow, color=color.new(color.blue, 92), title="Canal Wave")
+
+// Sinal de tendência pela Wave
+wave_up = emaWaveClose > emaWaveClose[1]
+bgcolor(wave_up ? color.new(color.green, 95) : color.new(color.red, 95))
