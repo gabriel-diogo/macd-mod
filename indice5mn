@@ -1,6 +1,6 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
 //@version=6
-strategy("Mini Índice Pro - Região de Compra Blindada", shorttitle = "WIN_Filtro_Esticado", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
+strategy("Mini Índice Pro - Região de Compra Blindada + MACD", shorttitle = "WIN_Filtro_MACD", overlay = true, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true)
 
 // =====================================================
 // 1. HORÁRIO DE ENTRADA E ZERAGEM (B3: 09:15 - 16:15)
@@ -35,9 +35,9 @@ float ema80 = ta.ema(close, ema80_len)
 float ema200 = ta.ema(close, ema200_len)
 
 // =====================================================
-// 3. FILTROS ANTI-SOBRECOMPRA / PREÇO ESTICADO
+// 3. FILTROS ANTI-ESTICAMENTO & MACD (COM BOTÃO LIGA/DESLIGA)
 // =====================================================
-groupStretched = "Filtro Anti-Preço Esticado"
+groupStretched = "Filtro Anti-Preço Esticado & MACD"
 bool use_rsi_filter = input.bool(true, "Ativar Filtro RSI Max", group = groupStretched)
 int rsi_max_allowed = input.int(65, "RSI Máximo para Compra", minval = 50, maxval = 90, group = groupStretched)
 float rsi_val = ta.rsi(close, 14)
@@ -47,6 +47,11 @@ bool use_dist_filter = input.bool(true, "Ativar Filtro Distância EMA 80", group
 float max_dist_pts = input.float(350.0, "Distância Máxima da EMA 80 (Pts)", minval = 50.0, step = 25.0, group = groupStretched)
 float current_dist_ema80 = math.abs(close - ema80)
 bool dist_ok = not use_dist_filter or (current_dist_ema80 <= max_dist_pts)
+
+// --- NOVO FILTRO MACD ACIMA DA LINHA 0 COM BOTÃO ---
+bool use_macd_filter = input.bool(true, "Ativar Filtro MACD Acima de 0", group = groupStretched)
+[macd_line, signal_line, hist_line] = ta.macd(close, 12, 26, 9)
+bool macd_ok = not use_macd_filter or (macd_line > 0.0)
 
 // =====================================================
 // 4. REGRA DE BLOQUEIO & LATERALIZAÇÃO
@@ -84,7 +89,7 @@ strategy.risk.max_intraday_loss(max_daily_loss_pts, strategy.cash)
 // 6. GATILHOS DE ENTRADA (COMPRA RESTRITA)
 // =====================================================
 bool cross_wave_80 = ta.crossover(emaWaveClose, ema80)
-bool buy_trigger = in_session and not is_consolidated and adx_bull and cross_wave_80 and price_above_wave and not inside_wave and rsi_ok and dist_ok
+bool buy_trigger = in_session and not is_consolidated and adx_bull and cross_wave_80 and price_above_wave and not inside_wave and rsi_ok and dist_ok and macd_ok
 
 // =====================================================
 // 7. EXECUÇÃO DE POSIÇÕES
@@ -95,7 +100,7 @@ var float active_tp = na
 if buy_trigger and strategy.position_size == 0 and not time_to_close
     active_sl := close - stop_pts
     active_tp := close + take_pts
-    strategy.entry("Compra DT", strategy.long, comment = "Compra Protegida")
+    strategy.entry("Compra DT", strategy.long, comment = "Compra MACD+")
     strategy.exit("Exit Long", from_entry = "Compra DT", stop = active_sl, limit = active_tp)
 
 if time_to_close and strategy.position_size != 0
